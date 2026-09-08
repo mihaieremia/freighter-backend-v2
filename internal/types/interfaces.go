@@ -6,6 +6,7 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/txnbuild"
 	"github.com/stellar/go-stellar-sdk/xdr"
+	wbtypes "github.com/stellar/wallet-backend/pkg/wbclient/types"
 )
 
 const (
@@ -49,6 +50,12 @@ type WalletBackendService interface {
 	GetHealth(ctx context.Context, network string) (GetHealthResponse, error)
 	GetBalancesByAccountAddresses(ctx context.Context, addresses []string, network string) (interface{}, error)
 	GetAccountTransactions(ctx context.Context, address, network string, params AccountHistoryParams) (*PaginatedResponse[*AccountTransaction], error)
+	// GetXoxnoLendingPositions returns the XOXNO lending position NFTs the
+	// account holds. An account unknown to wallet-backend returns none, not
+	// an error — indistinguishable from "no positions" by design.
+	GetXoxnoLendingPositions(ctx context.Context, address, network string) ([]wbtypes.XoxnoLendingAccount, error)
+	// GetXoxnoLendingMarkets returns the XOXNO lending market catalog.
+	GetXoxnoLendingMarkets(ctx context.Context, network string) ([]wbtypes.XoxnoLendingMarket, error)
 }
 
 // StellarExpertAsset is the subset of the Stellar Expert /asset/{id} response
@@ -85,4 +92,24 @@ type PriceEntry struct {
 type PricesService interface {
 	Service
 	GetPrices(ctx context.Context, tokens []string, network string) (map[string]*PriceEntry, error)
+}
+
+// PositionsService assembles the account positions view.
+type PositionsService interface {
+	Service
+	// GetAccountsPositions fans out one wallet-backend positions fetch per
+	// unique address, mirroring the balances endpoint's semantics: unknown
+	// accounts are normal per-address outcomes (empty positions); any
+	// systemic upstream failure fails the whole request.
+	GetAccountsPositions(ctx context.Context, addresses []string, network string) ([]*AccountPositions, error)
+}
+
+// XoxnoCatalogService serves the address-independent XOXNO market views:
+// the earn catalog (an option per asset, one "pool" per XOXNO hub the asset
+// is listed in, with ID "<hubId>:<asset>") and the raw market list the
+// positions service prices legs with.
+type XoxnoCatalogService interface {
+	Service
+	GetEarnOptions(ctx context.Context, network string) (*EarnOptionsCatalog, error)
+	GetMarkets(ctx context.Context, network string) ([]wbtypes.XoxnoLendingMarket, error)
 }

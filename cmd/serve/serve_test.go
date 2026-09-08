@@ -247,6 +247,23 @@ func TestServeCmd_RejectsNegativePriceFetchTimeout(t *testing.T) {
 	assert.Contains(t, err.Error(), "--price-fetch-timeout-seconds=-1 must be >= 0")
 }
 
+func TestServeCmd_RejectsNonPositiveCatalogCacheTTL(t *testing.T) {
+	t.Parallel()
+
+	for _, ttl := range []string{"0", "-30"} {
+		serveCmd := &ServeCmd{Cfg: &config.Config{}}
+		cmd := serveCmd.Command()
+		cmd.RunE = func(*cobra.Command, []string) error { return nil }
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"--wallet-backend-catalog-cache-ttl-seconds", ttl})
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), fmt.Sprintf("--wallet-backend-catalog-cache-ttl-seconds=%s must be positive", ttl))
+	}
+}
+
 func TestServeCmd_RejectsAccountHistoryMaxLimitAbove100(t *testing.T) {
 	t.Parallel()
 

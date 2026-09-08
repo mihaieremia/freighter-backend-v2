@@ -3,6 +3,8 @@ package utils
 import (
 	"context"
 
+	wbtypes "github.com/stellar/wallet-backend/pkg/wbclient/types"
+
 	"github.com/stellar/freighter-backend-v2/internal/types"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
@@ -120,6 +122,12 @@ type MockWalletBackendService struct {
 	GetAccountTransactionsError error
 	// GetAccountTransactionsFunc overrides Result/Error when set.
 	GetAccountTransactionsFunc func(ctx context.Context, address, network string, params types.AccountHistoryParams) (*types.PaginatedResponse[*types.AccountTransaction], error)
+
+	// XOXNO method stubs follow the same Result/Error precedence.
+	GetXoxnoLendingPositionsResult []wbtypes.XoxnoLendingAccount
+	GetXoxnoLendingPositionsError  error
+	GetXoxnoLendingMarketsResult   []wbtypes.XoxnoLendingMarket
+	GetXoxnoLendingMarketsError    error
 }
 
 func (m *MockWalletBackendService) Name() string {
@@ -151,6 +159,75 @@ func (m *MockWalletBackendService) GetAccountTransactions(ctx context.Context, a
 		return nil, m.GetAccountTransactionsError
 	}
 	return m.GetAccountTransactionsResult, nil
+}
+
+func (m *MockWalletBackendService) GetXoxnoLendingPositions(ctx context.Context, address, network string) ([]wbtypes.XoxnoLendingAccount, error) {
+	if m.GetXoxnoLendingPositionsError != nil {
+		return nil, m.GetXoxnoLendingPositionsError
+	}
+	if m.GetXoxnoLendingPositionsResult != nil {
+		return m.GetXoxnoLendingPositionsResult, nil
+	}
+	return []wbtypes.XoxnoLendingAccount{}, nil
+}
+
+func (m *MockWalletBackendService) GetXoxnoLendingMarkets(ctx context.Context, network string) ([]wbtypes.XoxnoLendingMarket, error) {
+	if m.GetXoxnoLendingMarketsError != nil {
+		return nil, m.GetXoxnoLendingMarketsError
+	}
+	if m.GetXoxnoLendingMarketsResult != nil {
+		return m.GetXoxnoLendingMarketsResult, nil
+	}
+	return []wbtypes.XoxnoLendingMarket{}, nil
+}
+
+// MockPositionsService stubs types.PositionsService for handler tests.
+type MockPositionsService struct {
+	GetAccountsPositionsResult []*types.AccountPositions
+	GetAccountsPositionsError  error
+}
+
+func (m *MockPositionsService) Name() string { return "mock-positions" }
+
+func (m *MockPositionsService) GetAccountsPositions(ctx context.Context, addresses []string, network string) ([]*types.AccountPositions, error) {
+	if m.GetAccountsPositionsError != nil {
+		return nil, m.GetAccountsPositionsError
+	}
+	if m.GetAccountsPositionsResult != nil {
+		return m.GetAccountsPositionsResult, nil
+	}
+	return []*types.AccountPositions{}, nil
+}
+
+// MockXoxnoCatalogService stubs types.XoxnoCatalogService for the
+// earn-options handler tests.
+type MockXoxnoCatalogService struct {
+	GetEarnOptionsResult *types.EarnOptionsCatalog
+	GetEarnOptionsError  error
+	GetMarketsResult     []wbtypes.XoxnoLendingMarket
+	GetMarketsError      error
+}
+
+func (m *MockXoxnoCatalogService) Name() string { return "mock-xoxno-catalog" }
+
+func (m *MockXoxnoCatalogService) GetEarnOptions(ctx context.Context, network string) (*types.EarnOptionsCatalog, error) {
+	if m.GetEarnOptionsError != nil {
+		return nil, m.GetEarnOptionsError
+	}
+	if m.GetEarnOptionsResult != nil {
+		return m.GetEarnOptionsResult, nil
+	}
+	return &types.EarnOptionsCatalog{Options: []types.EarnAssetOption{}}, nil
+}
+
+func (m *MockXoxnoCatalogService) GetMarkets(ctx context.Context, network string) ([]wbtypes.XoxnoLendingMarket, error) {
+	if m.GetMarketsError != nil {
+		return nil, m.GetMarketsError
+	}
+	if m.GetMarketsResult != nil {
+		return m.GetMarketsResult, nil
+	}
+	return []wbtypes.XoxnoLendingMarket{}, nil
 }
 
 type MockPricesService struct {

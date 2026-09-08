@@ -1,5 +1,5 @@
 // ABOUTME: Unit tests for the wbclient -> freighter snake_case mapping helpers.
-// ABOUTME: Covers transaction/operation field mapping, all 19 state-change variants, and edge flattening.
+// ABOUTME: Covers transaction/operation field mapping, all 22 state-change variants, and edge flattening.
 package services
 
 import (
@@ -135,6 +135,20 @@ func TestMapStateChange_AllVariants(t *testing.T) {
 			// keeps the key off the wire — see TestBalanceAuthorizationChange_*.
 			"balance_authorization_sac_no_flags", &wbtypes.BalanceAuthorizationChange{BaseStateChangeFields: base, TokenID: &s},
 			&types.BalanceAuthorizationChange{StateChangeBase: variantBase("BalanceAuthorizationChange"), TokenID: &s, Flags: []string{}},
+		},
+		{
+			// The three XOXNO lending variants: accountId is the position
+			// NFT's token id, not a Stellar address.
+			"xoxno_lending_supply", &wbtypes.XoxnoLendingSupplyChange{BaseStateChangeFields: base, TokenID: "CUSDC", Amount: "100", AccountID: "42", HubID: 1},
+			&types.XoxnoLendingSupplyChange{StateChangeBase: variantBase("XoxnoLendingSupplyChange"), TokenID: "CUSDC", Amount: "100", AccountID: "42", HubID: 1},
+		},
+		{
+			"xoxno_lending_debt", &wbtypes.XoxnoLendingDebtChange{BaseStateChangeFields: base, TokenID: "CUSDC", Amount: "50", AccountID: "42", HubID: 1},
+			&types.XoxnoLendingDebtChange{StateChangeBase: variantBase("XoxnoLendingDebtChange"), TokenID: "CUSDC", Amount: "50", AccountID: "42", HubID: 1},
+		},
+		{
+			"xoxno_lending_position", &wbtypes.XoxnoLendingPositionChange{BaseStateChangeFields: base, AccountID: "42"},
+			&types.XoxnoLendingPositionChange{StateChangeBase: variantBase("XoxnoLendingPositionChange"), AccountID: "42"},
 		},
 	}
 	for _, tc := range cases {

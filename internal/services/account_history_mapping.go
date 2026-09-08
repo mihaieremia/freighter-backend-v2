@@ -1,5 +1,5 @@
 // ABOUTME: Maps wallet-backend SDK transaction/operation/state-change types into freighter snake_case REST types.
-// ABOUTME: mapStateChange is the only non-trivial mapper — a type switch over the 19 SDK state-change variants.
+// ABOUTME: mapStateChange is the only non-trivial mapper — a type switch over the 22 SDK state-change variants.
 package services
 
 import (
@@ -36,10 +36,10 @@ func mapOperation(o *wbtypes.Operation) types.Operation {
 }
 
 // mapStateChange dispatches an SDK state-change node to the matching freighter
-// variant. The SDK's UnmarshalStateChangeNode rejects unknown __typename, so
-// the default branch is unreachable in practice; it degrades a hypothetical
-// future variant to base fields (with an empty variant) rather than panicking
-// or dropping the row.
+// variant. The SDK's UnmarshalStateChangeNode rejects an unknown __typename,
+// so the default branch is only reached by a variant the SDK decodes and this
+// switch has not caught up with; it degrades that row to base fields (with an
+// empty variant) rather than panicking or dropping it.
 func mapStateChange(n wbtypes.StateChangeNode) types.StateChange {
 	base := types.StateChangeBase{
 		Type:            string(n.GetCategory()),
@@ -109,6 +109,15 @@ func mapStateChange(n wbtypes.StateChangeNode) types.StateChange {
 	case *wbtypes.BalanceAuthorizationChange:
 		base.Variant = "BalanceAuthorizationChange"
 		return &types.BalanceAuthorizationChange{StateChangeBase: base, TokenID: sc.TokenID, LiquidityPoolID: sc.LiquidityPoolID, Flags: enumStrings(sc.Flags)}
+	case *wbtypes.XoxnoLendingSupplyChange:
+		base.Variant = "XoxnoLendingSupplyChange"
+		return &types.XoxnoLendingSupplyChange{StateChangeBase: base, TokenID: sc.TokenID, Amount: sc.Amount, AccountID: sc.AccountID, HubID: sc.HubID}
+	case *wbtypes.XoxnoLendingDebtChange:
+		base.Variant = "XoxnoLendingDebtChange"
+		return &types.XoxnoLendingDebtChange{StateChangeBase: base, TokenID: sc.TokenID, Amount: sc.Amount, AccountID: sc.AccountID, HubID: sc.HubID}
+	case *wbtypes.XoxnoLendingPositionChange:
+		base.Variant = "XoxnoLendingPositionChange"
+		return &types.XoxnoLendingPositionChange{StateChangeBase: base, AccountID: sc.AccountID}
 	default:
 		return &base
 	}

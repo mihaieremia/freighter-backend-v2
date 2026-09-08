@@ -45,6 +45,11 @@ func (s *ServeCmd) Command() *cobra.Command {
 			if d, m := s.Cfg.AppConfig.AccountHistoryDefaultLimit, s.Cfg.AppConfig.AccountHistoryMaxLimit; d <= 0 || m <= 0 || d > m || m > handlers.AccountHistoryUpstreamMaxLimit {
 				return fmt.Errorf("--account-history-default-limit=%d / --account-history-max-limit=%d must be positive, default <= max, and max <= %d", d, m, handlers.AccountHistoryUpstreamMaxLimit)
 			}
+			// 0 is rejected too: it reaches Redis SET as "no expiry", so the
+			// cached market catalog would never refresh.
+			if n := s.Cfg.WalletBackendConfig.CatalogCacheTTLSeconds; n <= 0 {
+				return fmt.Errorf("--wallet-backend-catalog-cache-ttl-seconds=%d must be positive", n)
+			}
 			if _, err := auth.ParseMode(s.Cfg.AppConfig.AuthMode); err != nil {
 				return fmt.Errorf("--auth-mode: %w", err)
 			}
@@ -93,9 +98,9 @@ func (s *ServeCmd) Command() *cobra.Command {
 	cmd.Flags().StringVar(&s.Cfg.AppConfig.MeridianPayStellarHouseAddress, "meridian-pay-stellar-house-address", "", "The Meridian Pay Stellar House collection address")
 	cmd.Flags().Int64Var(&s.Cfg.AppConfig.MaxRequestBodySize, "max-request-body-size", 1<<20, "Maximum request body size in bytes (default: 1MB)")
 	cmd.Flags().IntVar(&s.Cfg.AppConfig.MaxBalanceAddresses, "max-balance-addresses", 100, "Maximum number of addresses allowed in account balances request")
-	cmd.Flags().BoolVar(&s.Cfg.AppConfig.WalletBackendRoutesEnabled, "wallet-backend-routes-enabled", true, "Register the wallet-backend-fronted routes (POST /api/v1/accounts/balances and GET /api/v1/accounts/{address}/transactions). Set false (env WALLET_BACKEND_ROUTES_ENABLED) to leave both unregistered so their paths 404 — used where wallet-backend is not configured, since without it both routes 500 on every request.")
+	cmd.Flags().BoolVar(&s.Cfg.AppConfig.WalletBackendRoutesEnabled, "wallet-backend-routes-enabled", true, "Register the wallet-backend-fronted routes (POST /api/v1/accounts/balances, GET /api/v1/accounts/{address}/transactions, POST /api/v1/accounts/positions, GET /api/v1/protocols/xoxno/earn-options). Set false (env WALLET_BACKEND_ROUTES_ENABLED) to leave them unregistered so their paths 404 — used where wallet-backend is not configured, since without it every one of them 500s on every request.")
 	cmd.Flags().IntVar(&s.Cfg.AppConfig.MaxLedgerKeyAddresses, "max-ledger-key-addresses", 100, "Maximum number of public keys allowed in a ledger-key/accounts request")
-	cmd.Flags().IntVar(&s.Cfg.AppConfig.WalletBackendBalanceConcurrency, "wallet-backend-balance-concurrency", 10, "Per-request maximum number of concurrent wallet-backend balance fetches (the /accounts/balances handler fans out to one accountByAddress call per address)")
+	cmd.Flags().IntVar(&s.Cfg.AppConfig.WalletBackendBalanceConcurrency, "wallet-backend-balance-concurrency", 10, "Per-request maximum number of concurrent wallet-backend balance fetches (the /accounts/balances and /accounts/positions handlers fan out to one accountByAddress call per address)")
 	cmd.Flags().IntVar(&s.Cfg.AppConfig.AccountHistoryDefaultLimit, "account-history-default-limit", 20, "Default page size for GET /accounts/{address}/transactions")
 	cmd.Flags().IntVar(&s.Cfg.AppConfig.AccountHistoryMaxLimit, "account-history-max-limit", 100, "Maximum page size for GET /accounts/{address}/transactions (upstream hard-caps at 100)")
 
@@ -140,6 +145,7 @@ func (s *ServeCmd) Command() *cobra.Command {
 	cmd.Flags().StringVar(&s.Cfg.WalletBackendConfig.TestnetUrl, "wallet-backend-testnet-url", "", "Wallet backend testnet URL")
 	cmd.Flags().StringVar(&s.Cfg.WalletBackendConfig.PubnetSigningKey, "wallet-backend-pubnet-signing-key", "", "Wallet backend pubnet JWT signing key (Stellar secret key)")
 	cmd.Flags().StringVar(&s.Cfg.WalletBackendConfig.TestnetSigningKey, "wallet-backend-testnet-signing-key", "", "Wallet backend testnet JWT signing key (Stellar secret key)")
+	cmd.Flags().IntVar(&s.Cfg.WalletBackendConfig.CatalogCacheTTLSeconds, "wallet-backend-catalog-cache-ttl-seconds", 60, "TTL for the cached per-network market views (earn options) in Redis (seconds)")
 
 	// Token Prices Config
 	cmd.Flags().StringVar(&s.Cfg.PricesConfig.StellarExpertPubnetURL, "stellar-expert-pubnet-url", "https://api.stellar.expert/explorer/public", "Stellar Expert base URL for pubnet")

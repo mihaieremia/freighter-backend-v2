@@ -1,31 +1,36 @@
 # Wallet-Backend Routes Toggle — Design
 
 - **Tickets:** _none filed yet_
-- **Last updated:** 2026-07-29
+- **Last updated:** 2026-09-08
 - **Status:** Proposed
 
 ## Summary
 
-The two wallet-backend-fronted routes are registered and publicly reachable in every
+The four wallet-backend-fronted routes are registered and publicly reachable in every
 deployed environment, but return 500 on every valid request because their upstream is
 unconfigured outside dev:
 
 ```
 POST /api/v1/accounts/balances
 GET  /api/v1/accounts/{address}/transactions
+POST /api/v1/accounts/positions
+GET  /api/v1/protocols/xoxno/earn-options
 ```
 
 This adds a single config flag — `--wallet-backend-routes-enabled` /
 `WALLET_BACKEND_ROUTES_ENABLED`, default `true` — controlling whether those routes are
-**registered on the mux at all**. Production sets it `false`, so both paths 404 as
+**registered on the mux at all**. Production sets it `false`, so all four paths 404 as
 though they never existed. Re-enabling is one env-var change plus a pod restart: **no
 image rebuild, no code change, no release**.
 
-The flag controls *reachability only*. It does not fix either endpoint.
+The flag controls *reachability only*. It does not fix any of them.
 
 ## Current state
 
-Measured 2026-07-29 with anonymous requests. Neither the prd nor the stg manifest sets
+Measured 2026-07-29 with anonymous requests, when `/accounts/balances` and
+`/accounts/{address}/transactions` were the only two such routes; `/accounts/positions`
+and `/protocols/xoxno/earn-options` were added later and inherit the same failure —
+see "Why exactly these routes". Neither the prd nor the stg manifest sets
 `AUTH_MODE`, so both run the `--auth-mode` flag default of `permissive`
 (`cmd/serve/serve.go:87`) — which is why these anonymous calls reach the handler
 instead of 401ing.
@@ -73,28 +78,32 @@ and both routes**.
 Dev has no `WALLET_BACKEND_TESTNET_SIGNING_KEY`, so dev's testnet client is nil too and
 `?network=TESTNET` 500s there today. Pre-existing; unrelated to this change.
 
-### Why exactly these two routes
+### Why exactly these routes
 
-`walletBackendService` is passed to exactly two handlers — `NewAccountBalancesHandler`
-and `NewAccountHistoryHandler` (`internal/api/serve.go:219,222`). The interface's third
-method, `GetHealth`, is wired to no HTTP handler (the only `GetHealth` call in
-`internal/api/` is on `rpcService`, in `rpc_health.go`). So these two are the complete
-set of wallet-backend-dependent routes, and gating both closes the whole surface.
+`walletBackendService` is passed to exactly four consumers — the two handlers
+`NewAccountBalancesHandler` and `NewAccountHistoryHandler`, and the two services
+`NewXoxnoCatalogService` and `NewPositionsService`, which back the earn-options and
+positions handlers respectively (`internal/api/serve.go:219,222,232,240`). The
+interface's `GetHealth` method is wired to no HTTP handler (the only `GetHealth` call in
+`internal/api/` is on `rpcService`, in `rpc_health.go`). So these four routes are the
+complete set of wallet-backend-dependent routes, and gating all of them closes the whole
+surface.
 
 ## Goals
 
-- Both wallet-backend-fronted routes are unreachable in production.
+- All four wallet-backend-fronted routes are unreachable in production.
 - They stay reachable everywhere else (dev, stg, local), for development and for
   verifying the eventual fix.
 - Re-enabling in production is a config change, not a code change or release.
 
 ## Non-goals
 
-- **Fixing either endpoint.** Adding the missing `WALLET_BACKEND_*` variables is
+- **Fixing any of the endpoints.** Adding the missing `WALLET_BACKEND_*` variables is
   separate work.
 - **Changing any response shape**, error string, or handler.
-- **Client changes.** The extension calls neither endpoint: zero references to
-  `accounts/balances` across `freighter/@shared` and `freighter/extension/src`.
+- **Client changes.** The extension calls none of them: zero references to
+  `accounts/balances` across `freighter/@shared` and `freighter/extension/src`, and the
+  positions and earn-options routes ship for the first time on this branch.
 
 ## Design
 
@@ -103,7 +112,7 @@ Four changes, all in `freighter-backend-v2`.
 ### 1. Config field
 
 `AppConfig` (`internal/config/config.go`) gains `WalletBackendRoutesEnabled bool`,
-documenting both gated routes and the shared failure mode.
+documenting the gated routes and the shared failure mode.
 
 ### 2. Flag
 
@@ -122,7 +131,7 @@ closest precedent in the repo.
 ### 3. Route table
 
 `route` (`internal/api/serve.go`) gains an `enabled bool` field, set explicitly on all
-11 entries, and `initHandlers` skips disabled routes:
+13 entries, and `initHandlers` skips disabled routes:
 
 ```go
 for _, rt := range rts {
@@ -144,8 +153,8 @@ already looks — the same argument that comment makes for `gated`.
 The cost is that the 9 unrelated route lines each gain a `true`, because Go positional
 composite literals require every field. That is accepted as a one-time mechanical diff.
 
-**Why one flag for both routes.** They share one dependency and one failure mode, so
-there is no state where enabling exactly one is correct. A second flag would add a knob
+**Why one flag for all of them.** They share one dependency and one failure mode, so
+there is no state where enabling a subset is correct. A second flag would add a knob
 whose only novel setting is a misconfiguration. If a route is later added that *can*
 work without wallet-backend, it should get its own gate rather than widening this one.
 
@@ -158,16 +167,16 @@ work without wallet-backend, it should get its own gate rather than widening thi
   the table but unregistered it would get 404, and **that test would fail** in a way that
   reads like an auth regression. That guard's assertion message now names the
   unregistered-route case explicitly.
-- Table-driven over both routes: 404 when disabled, and 401-in-strict when enabled
+- Table-driven over all four routes: 404 when disabled, and 401-in-strict when enabled
   (proving each is registered *and* still auth-gated — the assertion that stops the flag
   from becoming an accidental auth bypass).
-- `WalletBackendRoutesGatedTogether` asserts that `routes()` disables *exactly* these two
-  patterns, so a change gating only one — leaving the other publicly 500ing in prd —
+- `WalletBackendRoutesGatedTogether` asserts that `routes()` disables *exactly* these four
+  patterns, so a change gating only some — leaving the rest publicly 500ing in prd —
   fails.
 - Command-level tests cover the config path production actually uses: the flag defaults to
   `true`, and `WALLET_BACKEND_ROUTES_ENABLED=false`/`=true` reach the config field through
   viper. The api-package tests set the field directly, so without these a renamed flag or
-  broken env binding would leave them green while both endpoints stayed registered in
+  broken env binding would leave them green while all four endpoints stayed registered in
   prd — a fail-**open** on the control this flag exists to provide.
 
 All guards were mutation-tested rather than assumed: flipping the default, renaming the
@@ -176,7 +185,7 @@ always-enabled are each caught by the intended test.
 
 ## Behaviour when disabled
 
-Both paths return **404** with `net/http`'s default body. Each pattern is registered
+All four paths return **404** with `net/http`'s default body. Each pattern is registered
 under a single method, so an unregistered one yields 404 rather than 405 — Go's
 `ServeMux` returns 405 only when the same pattern exists under a different method.
 
@@ -198,7 +207,7 @@ check when wondering where the series went.
 | **dev** | default `true` | reachable | yes, for `PUBLIC` |
 | **local** | default `true` | reachable | no — compose sets no `WALLET_BACKEND_*` |
 
-Turning the flag on does not make either endpoint work. Only stg and prd's missing
+Turning the flag on does not make any of these endpoints work. Only stg and prd's missing
 wallet-backend configuration does that.
 
 ## Deployment
@@ -234,7 +243,7 @@ wallet-backend, and it provides no way to hold them off in an environment where
 wallet-backend *is* configured. The explicit flag was preferred for being obvious at the
 point of decision.
 
-**Two independent flags, one per route.** Rejected: see "Why one flag for both routes."
+**Independent flags, one per route.** Rejected: see "Why one flag for all of them."
 
 **Block the paths at the Traefik edge in `stellar/kube`** — no backend change,
 revert-to-re-enable. Rejected because the handlers stay reachable to in-cluster callers
@@ -265,5 +274,5 @@ not exist" — nothing does today.
 ## Follow-ups
 
 - Add `WALLET_BACKEND_ROUTES_ENABLED` to the wallet-eng runbooks (new operational env
-  var; reachability of both routes in prd now depends on it).
+  var; reachability of all four routes in prd now depends on it).
 - Configure wallet-backend for stg, then prd, and remove the variable.

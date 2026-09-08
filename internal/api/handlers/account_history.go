@@ -18,10 +18,6 @@ import (
 	"github.com/stellar/freighter-backend-v2/internal/types"
 )
 
-// AccountHistoryContextTimeout caps each /accounts/{address}/transactions request
-// at 10s. Matches AccountBalancesContextTimeout.
-const AccountHistoryContextTimeout = 10 * time.Second
-
 // AccountHistoryUpstreamMaxLimit is the wallet-backend page-size ceiling (it
 // returns BAD_USER_INPUT beyond 100). freighter rejects a larger configured
 // max limit so a misconfiguration fails fast instead of 502-ing at request time.
@@ -68,9 +64,9 @@ func (h *AccountHistoryHandler) parseRequest(r *http.Request) (address, network 
 		return "", "", types.AccountHistoryParams{}, httperror.BadRequest(fmt.Sprintf("invalid Stellar address %s: must be an account (G...) or contract (C...) address", address), errors.New("invalid address"))
 	}
 
-	network = r.URL.Query().Get("network")
-	if !isValidWalletBackendNetwork(network) {
-		return "", "", types.AccountHistoryParams{}, httperror.BadRequest(fmt.Sprintf("invalid network: must be %s or %s", types.PUBLIC, types.TESTNET), errors.New("invalid network"))
+	network, networkErr := walletBackendNetworkFromQuery(r)
+	if networkErr != nil {
+		return "", "", types.AccountHistoryParams{}, networkErr
 	}
 
 	limit := h.DefaultLimit
@@ -133,7 +129,7 @@ func isValidStellarAddress(address string) bool {
 // GetAccountTransactions returns one page of an account's transactions from
 // wallet-backend, in the spec's PaginatedResponse[T] envelope.
 func (h *AccountHistoryHandler) GetAccountTransactions(w http.ResponseWriter, r *http.Request) error {
-	ctx, cancel := context.WithTimeout(r.Context(), AccountHistoryContextTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), WalletBackendContextTimeout)
 	defer cancel()
 
 	address, network, params, herr := h.parseRequest(r)

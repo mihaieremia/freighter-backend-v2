@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 
@@ -14,10 +13,6 @@ import (
 	response "github.com/stellar/freighter-backend-v2/internal/api/httpresponse"
 	"github.com/stellar/freighter-backend-v2/internal/api/middleware"
 	"github.com/stellar/freighter-backend-v2/internal/types"
-)
-
-const (
-	AccountBalancesContextTimeout = 10 * time.Second
 )
 
 type AccountBalancesHandler struct {
@@ -32,12 +27,14 @@ func NewAccountBalancesHandler(walletBackendService types.WalletBackendService, 
 	}
 }
 
-type AccountBalancesRequest struct {
+// AddressesRequest is the body shared by the address-list endpoints:
+// /accounts/balances and /accounts/positions.
+type AddressesRequest struct {
 	Addresses []string `json:"addresses"`
 }
 
-func validateAccountBalancesRequest(r *http.Request, maxAddresses int) (*AccountBalancesRequest, *httperror.HttpError) {
-	var req AccountBalancesRequest
+func validateAddressesRequest(r *http.Request, maxAddresses int) (*AddressesRequest, *httperror.HttpError) {
+	var req AddressesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		if middleware.IsMaxBytesError(err) {
 			return nil, httperror.RequestEntityTooLarge("Request body too large", err)
@@ -67,17 +64,15 @@ func validateAccountBalancesRequest(r *http.Request, maxAddresses int) (*Account
 
 // GetAccountBalances handles fetching account balances from wallet backend
 func (h *AccountBalancesHandler) GetAccountBalances(w http.ResponseWriter, r *http.Request) error {
-	contextWithTimeout, cancel := context.WithTimeout(r.Context(), AccountBalancesContextTimeout)
+	contextWithTimeout, cancel := context.WithTimeout(r.Context(), WalletBackendContextTimeout)
 	defer cancel()
 
-	queryParams := r.URL.Query()
-	network := queryParams.Get("network")
-
-	if !isValidWalletBackendNetwork(network) {
-		return httperror.BadRequest(fmt.Sprintf("invalid network: must be %s or %s", types.PUBLIC, types.TESTNET), errors.New("invalid network"))
+	network, networkErr := walletBackendNetworkFromQuery(r)
+	if networkErr != nil {
+		return networkErr
 	}
 
-	req, validationErr := validateAccountBalancesRequest(r, h.MaxAddresses)
+	req, validationErr := validateAddressesRequest(r, h.MaxAddresses)
 	if validationErr != nil {
 		return validationErr
 	}

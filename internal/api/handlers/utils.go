@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/alitto/pond/v2"
 	"github.com/stellar/go-stellar-sdk/txnbuild"
@@ -20,6 +22,12 @@ import (
 	"github.com/stellar/freighter-backend-v2/internal/utils"
 )
 
+// WalletBackendContextTimeout caps every wallet-backend-fronted request
+// (/accounts/balances, /accounts/{address}/transactions, /accounts/positions,
+// /protocols/xoxno/earn-options) at 10s. They share one upstream and one
+// failure mode, so they share one budget.
+const WalletBackendContextTimeout = 10 * time.Second
+
 // isValidWalletBackendNetwork reports whether network is one of the values
 // freighter-backend has a wallet-backend client configured for. WalletBackendConfig
 // only carries pubnet and testnet URL/signing-key fields, so FUTURENET (which is
@@ -27,6 +35,18 @@ import (
 // to prevent silent fall-through to the pubnet client.
 func isValidWalletBackendNetwork(network string) bool {
 	return network == types.PUBLIC || network == types.TESTNET
+}
+
+// walletBackendNetworkFromQuery reads the `network` query param and rejects
+// anything isValidWalletBackendNetwork turns down, returning the 400 every
+// wallet-backend-fronted handler answers with. Shared so the accepted set and
+// the message clients match on cannot drift between them.
+func walletBackendNetworkFromQuery(r *http.Request) (string, *httperror.HttpError) {
+	network := r.URL.Query().Get("network")
+	if !isValidWalletBackendNetwork(network) {
+		return "", httperror.BadRequest(fmt.Sprintf("invalid network: must be %s or %s", types.PUBLIC, types.TESTNET), errors.New("invalid network"))
+	}
+	return network, nil
 }
 
 // isValidNetwork reports whether network is one of the Stellar networks the RPC

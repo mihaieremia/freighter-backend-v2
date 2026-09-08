@@ -201,6 +201,36 @@ type BalanceAuthorizationChange struct {
 	Flags           []string `json:"flags,omitempty"`
 }
 
+// XoxnoLendingSupplyChange — a supply leg of an XOXNO lending position NFT
+// credited, debited, seized or accrued. AccountID is the position NFT's token
+// id (the controller's account_id), not a Stellar address, and Amount is in
+// the asset's base units as the controller emits it.
+type XoxnoLendingSupplyChange struct {
+	StateChangeBase
+	TokenID   string `json:"token_id"`
+	Amount    string `json:"amount"`
+	AccountID string `json:"account_id"`
+	HubID     int32  `json:"hub_id"`
+}
+
+// XoxnoLendingDebtChange — a debt leg of an XOXNO lending position NFT
+// borrowed, repaid, repaid by a liquidator or accrued. Same field meanings as
+// XoxnoLendingSupplyChange.
+type XoxnoLendingDebtChange struct {
+	StateChangeBase
+	TokenID   string `json:"token_id"`
+	Amount    string `json:"amount"`
+	AccountID string `json:"account_id"`
+	HubID     int32  `json:"hub_id"`
+}
+
+// XoxnoLendingPositionChange — an XOXNO lending position NFT minted,
+// transferred (one row per side), burned or liquidated.
+type XoxnoLendingPositionChange struct {
+	StateChangeBase
+	AccountID string `json:"account_id"`
+}
+
 // AccountTransaction is one transaction plus the calling account's operations
 // and state changes within it. The embedded Transaction's fields are promoted
 // to the top level of the JSON object. Operations and StateChanges are always

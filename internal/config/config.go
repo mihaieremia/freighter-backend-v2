@@ -166,4 +166,9 @@ type WalletBackendConfig struct {
 	TestnetUrl        string
 	PubnetSigningKey  string
 	TestnetSigningKey string
+	// CatalogCacheTTLSeconds is the Redis TTL for the per-network market
+	// views behind the address-independent market-catalog endpoints (earn
+	// options), served from wallet-backend's lending GraphQL surface. One
+	// cache entry per network serves every user.
+	CatalogCacheTTLSeconds int
 }
