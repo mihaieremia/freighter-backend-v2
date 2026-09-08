@@ -114,13 +114,15 @@ func TestGetBlendPools(t *testing.T) {
 		var req wbclient.GraphQLRequest
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 		assert.Contains(t, req.Query, "blendPools")
-		_, _ = w.Write([]byte(`{"data": {"blendPools": [{
+		// blendPools is a Relay connection since wallet-backend's pool catalog
+		// became keyset-paginated; the SDK walks pages and returns the nodes.
+		_, _ = w.Write([]byte(`{"data": {"blendPools": {"edges": [{"cursor": "c1", "node": {
 			"address": "CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF",
 			"name": "TestnetV2",
 			"status": "ACTIVE",
 			"suppliedUsd": 2100000.5,
 			"reserves": []
-		}]}}`))
+		}}], "pageInfo": {"hasNextPage": false, "hasPreviousPage": false, "startCursor": "c1", "endCursor": "c1"}}}}`))
 	})
 
 	pools, err := svc.GetBlendPools(ctx, types.TESTNET)
@@ -181,7 +183,7 @@ func TestBlendRequestIsSigned(t *testing.T) {
 	var gotAuth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(`{"data":{"blendPools":[]}}`))
+		_, _ = w.Write([]byte(`{"data":{"blendPools":{"edges":[],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false}}}}`))
 	}))
 	t.Cleanup(server.Close)
 
