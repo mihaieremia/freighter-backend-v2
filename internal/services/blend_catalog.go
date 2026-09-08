@@ -121,7 +121,7 @@ func (b *blendCatalogService) GetPools(ctx context.Context, network string) (_ *
 // deposits, filtered through the operator allowlist. It reads through
 // GetPools, so both endpoints share one upstream query and one cache entry
 // per network; the derivation itself is cheap enough to run per request.
-func (b *blendCatalogService) GetEarnOptions(ctx context.Context, network string) (_ *types.BlendEarnOptionsCatalog, err error) {
+func (b *blendCatalogService) GetEarnOptions(ctx context.Context, network string) (_ *types.EarnOptionsCatalog, err error) {
 	start := time.Now()
 	defer func() {
 		metrics.Record(b.svcMetrics, blendCatalogServiceName, "GetEarnOptions", network, time.Since(start).Seconds(), err)
@@ -132,7 +132,7 @@ func (b *blendCatalogService) GetEarnOptions(ctx context.Context, network string
 		return nil, err
 	}
 
-	return &types.BlendEarnOptionsCatalog{
+	return &types.EarnOptionsCatalog{
 		Options: deriveEarnOptions(catalog.Pools, b.allowlist[strings.ToUpper(network)]),
 	}, nil
 }
@@ -180,8 +180,8 @@ func mapCatalogPools(pools []wbtypes.BlendPool) []types.BlendCatalogPool {
 // enabled, and — when an allowlist is configured — pools Freighter curates.
 // Assets are ordered by asset id; each asset's pools by supplied USD
 // descending (unpriced last, id tie-break).
-func deriveEarnOptions(pools []types.BlendCatalogPool, allowed map[string]bool) []types.BlendEarnAssetOption {
-	byAsset := make(map[string]*types.BlendEarnAssetOption)
+func deriveEarnOptions(pools []types.BlendCatalogPool, allowed map[string]bool) []types.EarnAssetOption {
+	byAsset := make(map[string]*types.EarnAssetOption)
 	for _, pool := range pools {
 		if pool.Status == nil || !wbtypes.BlendPoolStatus(*pool.Status).AcceptsSupply() {
 			continue
@@ -195,16 +195,16 @@ func deriveEarnOptions(pools []types.BlendCatalogPool, allowed map[string]bool) 
 			}
 			option, ok := byAsset[r.AssetID]
 			if !ok {
-				option = &types.BlendEarnAssetOption{
+				option = &types.EarnAssetOption{
 					AssetID:  r.AssetID,
 					Symbol:   r.Symbol,
 					Name:     r.Name,
 					Decimals: r.Decimals,
-					Pools:    []types.BlendEarnPool{},
+					Pools:    []types.EarnPool{},
 				}
 				byAsset[r.AssetID] = option
 			}
-			option.Pools = append(option.Pools, types.BlendEarnPool{
+			option.Pools = append(option.Pools, types.EarnPool{
 				ID:                 pool.ID,
 				Name:               pool.Name,
 				SupplyAPY:          r.SupplyAPY,
@@ -214,7 +214,14 @@ func deriveEarnOptions(pools []types.BlendCatalogPool, allowed map[string]bool) 
 		}
 	}
 
-	options := make([]types.BlendEarnAssetOption, 0, len(byAsset))
+	return sortedEarnOptions(byAsset)
+}
+
+// sortedEarnOptions flattens the per-asset map into the response order shared
+// by every protocol's earn catalog: assets by asset id; each asset's pools by
+// supplied USD descending (unpriced last, id tie-break).
+func sortedEarnOptions(byAsset map[string]*types.EarnAssetOption) []types.EarnAssetOption {
+	options := make([]types.EarnAssetOption, 0, len(byAsset))
 	for _, option := range byAsset {
 		sort.Slice(option.Pools, func(i, j int) bool {
 			a, b := option.Pools[i], option.Pools[j]
@@ -244,7 +251,7 @@ func cacheGet[T any](ctx context.Context, redis *store.RedisStore, key string) (
 	}
 	hits, err := redis.MGetJSON(ctx, []string{key}, func() any { return new(T) })
 	if err != nil {
-		logger.ErrorWithContext(ctx, "blend catalog cache read failed", "key", key, "error", err)
+		logger.ErrorWithContext(ctx, "catalog cache read failed", "key", key, "error", err)
 		return nil, false
 	}
 	hit, ok := hits[key].(*T)
@@ -257,6 +264,6 @@ func cacheSet(ctx context.Context, redis *store.RedisStore, key string, value an
 		return
 	}
 	if err := redis.SetJSON(ctx, key, value, ttl); err != nil {
-		logger.ErrorWithContext(ctx, "blend catalog cache write failed", "key", key, "error", err)
+		logger.ErrorWithContext(ctx, "catalog cache write failed", "key", key, "error", err)
 	}
 }

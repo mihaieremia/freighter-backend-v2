@@ -140,12 +140,12 @@ func TestMapBlendDetailNullSafety(t *testing.T) {
 }
 
 func TestAccountAggregate(t *testing.T) {
-	pool := func(usd, supplied, apy *float64) wbtypes.BlendPoolPosition {
-		return wbtypes.BlendPoolPosition{UsdValue: usd, SuppliedUsd: supplied, NetApy: apy}
+	pool := func(usd, supplied, apy *float64) types.PoolPosition {
+		return types.PoolPosition{NetUSD: usd, SuppliedUSD: supplied, NetAPY: apy}
 	}
 
 	t.Run("supplied-weighted mean across pools", func(t *testing.T) {
-		total, apy := accountAggregate([]wbtypes.BlendPoolPosition{
+		total, apy := accountAggregate([]types.PoolPosition{
 			pool(f64(8000), f64(9000), f64(0.05)),
 			pool(f64(900), f64(1000), f64(0.01)),
 		}, nil)
@@ -156,7 +156,7 @@ func TestAccountAggregate(t *testing.T) {
 	})
 
 	t.Run("strict null: one unpriced pool nulls the header", func(t *testing.T) {
-		total, apy := accountAggregate([]wbtypes.BlendPoolPosition{
+		total, apy := accountAggregate([]types.PoolPosition{
 			pool(f64(9000), f64(9000), f64(0.05)),
 			pool(nil, nil, nil),
 		}, nil)
@@ -165,7 +165,7 @@ func TestAccountAggregate(t *testing.T) {
 	})
 
 	t.Run("null netApy nulls the rate but keeps the total", func(t *testing.T) {
-		total, apy := accountAggregate([]wbtypes.BlendPoolPosition{
+		total, apy := accountAggregate([]types.PoolPosition{
 			pool(f64(9000), f64(9000), f64(0.05)),
 			pool(f64(1000), f64(1000), nil),
 		}, nil)
@@ -175,7 +175,7 @@ func TestAccountAggregate(t *testing.T) {
 	})
 
 	t.Run("null suppliedUsd nulls the rate but keeps the total", func(t *testing.T) {
-		total, apy := accountAggregate([]wbtypes.BlendPoolPosition{
+		total, apy := accountAggregate([]types.PoolPosition{
 			pool(f64(9000), f64(9000), f64(0.05)),
 			pool(f64(1000), nil, f64(0.01)),
 		}, nil)
@@ -192,7 +192,7 @@ func TestAccountAggregate(t *testing.T) {
 	})
 
 	t.Run("zero supplied base yields null apy", func(t *testing.T) {
-		total, apy := accountAggregate([]wbtypes.BlendPoolPosition{
+		total, apy := accountAggregate([]types.PoolPosition{
 			pool(f64(0), f64(0), f64(0.05)),
 		}, nil)
 		require.NotNil(t, total)
@@ -202,7 +202,7 @@ func TestAccountAggregate(t *testing.T) {
 
 	t.Run("backstop value joins the total but not the rate", func(t *testing.T) {
 		total, apy := accountAggregate(
-			[]wbtypes.BlendPoolPosition{pool(f64(9000), f64(9000), f64(0.05))},
+			[]types.PoolPosition{pool(f64(9000), f64(9000), f64(0.05))},
 			[]wbtypes.BlendBackstopPosition{{UsdValue: f64(500)}},
 		)
 		require.NotNil(t, total)
@@ -213,7 +213,7 @@ func TestAccountAggregate(t *testing.T) {
 
 	t.Run("unpriced backstop nulls the total (strict)", func(t *testing.T) {
 		total, apy := accountAggregate(
-			[]wbtypes.BlendPoolPosition{pool(f64(9000), f64(9000), f64(0.05))},
+			[]types.PoolPosition{pool(f64(9000), f64(9000), f64(0.05))},
 			[]wbtypes.BlendBackstopPosition{{UsdValue: nil}},
 		)
 		assert.Nil(t, total)
@@ -277,7 +277,7 @@ func TestGetAccountsPositionsMapsAndPassesThrough(t *testing.T) {
 			}},
 		},
 	}
-	svc := NewPositionsService(mockWB, 0, nil)
+	svc := NewPositionsService(mockWB, nil, 0, nil)
 
 	results, err := svc.GetAccountsPositions(context.Background(), []string{"GDW6QB3BFPQ3I4LH752JD2HYADFM2T4RVRCEUNCCH7MICWZR67NL5552"}, types.TESTNET)
 	require.NoError(t, err)
@@ -305,7 +305,7 @@ func TestGetAccountsPositionsMapsAndPassesThrough(t *testing.T) {
 }
 
 func TestGetAccountsPositionsEmptyAccountAndDedupe(t *testing.T) {
-	svc := NewPositionsService(&utils.MockWalletBackendService{}, 0, nil)
+	svc := NewPositionsService(&utils.MockWalletBackendService{}, nil, 0, nil)
 
 	// Duplicates collapse, first-seen order preserved — like balances.
 	results, err := svc.GetAccountsPositions(context.Background(), []string{
@@ -324,7 +324,7 @@ func TestGetAccountsPositionsEmptyAccountAndDedupe(t *testing.T) {
 
 func TestGetAccountsPositionsUpstreamError(t *testing.T) {
 	upErr := errors.New("wallet-backend on fire")
-	svc := NewPositionsService(&utils.MockWalletBackendService{GetBlendPositionsError: upErr}, 0, nil)
+	svc := NewPositionsService(&utils.MockWalletBackendService{GetBlendPositionsError: upErr}, nil, 0, nil)
 
 	// A systemic failure for any address fails the whole request.
 	_, err := svc.GetAccountsPositions(context.Background(), []string{"GDW6QB3BFPQ3I4LH752JD2HYADFM2T4RVRCEUNCCH7MICWZR67NL5552"}, types.TESTNET)

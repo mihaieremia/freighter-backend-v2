@@ -57,6 +57,11 @@ type WalletBackendService interface {
 	GetBlendPositions(ctx context.Context, address, network string) (*wbtypes.BlendAccountPositions, error)
 	// GetBlendPools returns the pool-wide Blend catalog (no account data).
 	GetBlendPools(ctx context.Context, network string) ([]wbtypes.BlendPool, error)
+	// GetXoxnoLendingPositions returns the XOXNO lending position NFTs the
+	// account holds; unknown accounts return none, like GetBlendPositions.
+	GetXoxnoLendingPositions(ctx context.Context, address, network string) ([]wbtypes.XoxnoLendingAccount, error)
+	// GetXoxnoLendingMarkets returns the XOXNO lending market catalog.
+	GetXoxnoLendingMarkets(ctx context.Context, network string) ([]wbtypes.XoxnoLendingMarket, error)
 }
 
 // StellarExpertAsset is the subset of the Stellar Expert /asset/{id} response

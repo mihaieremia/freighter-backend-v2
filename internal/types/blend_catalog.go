@@ -1,5 +1,5 @@
-// ABOUTME: Response types for the Blend market-catalog endpoints:
-// ABOUTME: GET /protocols/blend/pools and GET /protocols/blend/earn-options.
+// ABOUTME: Response types for the market-catalog endpoints: the Blend pools
+// ABOUTME: view and the protocol-neutral earn-options view (Blend, XOXNO).
 package types
 
 import "context"
@@ -67,30 +67,32 @@ type BlendCatalogReserve struct {
 	PriceUSD           *float64 `json:"price_usd"`
 }
 
-// BlendEarnOptionsCatalog is the response body for the earn-options
-// endpoint: "where can I earn this asset", serving the Earn select-token and
-// select-pool screens. Derived from the pools catalog: disabled reserves and
-// deposit-rejecting pools are excluded, and pools are filtered through the
-// operator-curated allowlist when one is configured.
-type BlendEarnOptionsCatalog struct {
+// EarnOptionsCatalog is the response body for the per-protocol earn-options
+// endpoints: "where can I earn this asset", serving the Earn select-token and
+// select-pool screens. Every protocol renders the same shape: an option per
+// asset, one pool per venue offering it. For Blend it is derived from the
+// pools catalog (disabled reserves and deposit-rejecting pools excluded,
+// pools filtered through the operator allowlist when configured); for XOXNO
+// a "pool" is one hub market with ID "<hubId>:<asset>".
+type EarnOptionsCatalog struct {
 	// Options has one entry per earnable asset. Always non-nil; assets whose
 	// every pool was removed by the allowlist are dropped.
-	Options []BlendEarnAssetOption `json:"options"`
+	Options []EarnAssetOption `json:"options"`
 }
 
-// BlendEarnAssetOption is one earnable asset and the pools offering it.
-type BlendEarnAssetOption struct {
+// EarnAssetOption is one earnable asset and the pools offering it.
+type EarnAssetOption struct {
 	AssetID  string  `json:"asset_id"`
 	Symbol   *string `json:"symbol"`
 	Name     *string `json:"name"`
 	Decimals *int32  `json:"decimals"`
 	// Pools is ordered by supplied USD descending (unpriced last). The
 	// emissions-inclusive earn headline is SupplyAPY + EmissionsSupplyAPR.
-	Pools []BlendEarnPool `json:"pools"`
+	Pools []EarnPool `json:"pools"`
 }
 
-// BlendEarnPool is one pool's offer for an asset.
-type BlendEarnPool struct {
+// EarnPool is one pool's offer for an asset.
+type EarnPool struct {
 	ID                 string   `json:"id"`
 	Name               *string  `json:"name"`
 	SupplyAPY          *float64 `json:"supply_apy"`
@@ -98,9 +100,14 @@ type BlendEarnPool struct {
 	SuppliedUSD        *float64 `json:"supplied_usd"`
 }
 
+// EarnCatalogService serves a protocol's address-independent earn view.
+type EarnCatalogService interface {
+	Service
+	GetEarnOptions(ctx context.Context, network string) (*EarnOptionsCatalog, error)
+}
+
 // BlendCatalogService serves the address-independent Blend market views.
 type BlendCatalogService interface {
-	Service
+	EarnCatalogService
 	GetPools(ctx context.Context, network string) (*BlendPoolsCatalog, error)
-	GetEarnOptions(ctx context.Context, network string) (*BlendEarnOptionsCatalog, error)
 }

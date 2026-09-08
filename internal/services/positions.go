@@ -1,5 +1,5 @@
-// ABOUTME: Positions service: maps wallet-backend Blend positions into the
-// ABOUTME: frontend-shaped account positions response.
+// ABOUTME: Positions service: maps wallet-backend Blend and XOXNO lending
+// ABOUTME: positions into the frontend-shaped account positions response.
 package services
 
 import (
@@ -25,18 +25,21 @@ const (
 
 type positionsService struct {
 	walletBackend  types.WalletBackendService
+	xoxnoMarkets   types.XoxnoCatalogService
 	maxConcurrency int
 	svcMetrics     *metrics.Service
 }
 
 // NewPositionsService wires the positions view. maxConcurrency caps the
-// per-request fan-out goroutines, like the balances fan-out.
-func NewPositionsService(walletBackend types.WalletBackendService, maxConcurrency int, m *metrics.Service) types.PositionsService {
+// per-request fan-out goroutines, like the balances fan-out. xoxnoMarkets
+// prices XOXNO legs; nil leaves XOXNO positions out of the response.
+func NewPositionsService(walletBackend types.WalletBackendService, xoxnoMarkets types.XoxnoCatalogService, maxConcurrency int, m *metrics.Service) types.PositionsService {
 	if maxConcurrency <= 0 {
 		maxConcurrency = defaultPositionsConcurrency
 	}
 	return &positionsService{
 		walletBackend:  walletBackend,
+		xoxnoMarkets:   xoxnoMarkets,
 		maxConcurrency: maxConcurrency,
 		svcMetrics:     m,
 	}
@@ -49,7 +52,9 @@ func (p *positionsService) Name() string { return positionsServiceName }
 // so a fresh deposit is visible as soon as the indexer ingests it. Unknown
 // accounts are normal per-address outcomes (empty positions, already
 // normalized by the wallet-backend service); any other failure is systemic
-// and fails the whole request.
+// and fails the whole request. That includes the XOXNO catalog read that
+// prices every address's legs: a failure there fails the whole request, the
+// same policy as a Blend upstream failure.
 func (p *positionsService) GetAccountsPositions(ctx context.Context, addresses []string, network string) (_ []*types.AccountPositions, err error) {
 	start := time.Now()
 	defer func() {
@@ -59,15 +64,38 @@ func (p *positionsService) GetAccountsPositions(ctx context.Context, addresses [
 	unique := utils.DedupePreserveOrder(addresses)
 	results := make([]*types.AccountPositions, len(unique))
 
+	// One catalog read prices every address's XOXNO legs; it is cached
+	// per network, so this is cheap.
+	var markets map[xoxnoMarketKey]wbtypes.XoxnoLendingMarket
+	if p.xoxnoMarkets != nil {
+		list, marketsErr := p.xoxnoMarkets.GetMarkets(ctx, network)
+		if marketsErr != nil {
+			return nil, marketsErr
+		}
+		markets = indexXoxnoMarkets(list)
+	}
+
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(p.maxConcurrency)
 	for i, addr := range unique {
 		g.Go(func() error {
-			upstream, fetchErr := p.walletBackend.GetBlendPositions(gctx, addr, network)
-			if fetchErr != nil {
+			var blend *wbtypes.BlendAccountPositions
+			var xoxno []wbtypes.XoxnoLendingAccount
+			ag, actx := errgroup.WithContext(gctx)
+			ag.Go(func() (fetchErr error) {
+				blend, fetchErr = p.walletBackend.GetBlendPositions(actx, addr, network)
+				return fetchErr
+			})
+			if p.xoxnoMarkets != nil {
+				ag.Go(func() (fetchErr error) {
+					xoxno, fetchErr = p.walletBackend.GetXoxnoLendingPositions(actx, addr, network)
+					return fetchErr
+				})
+			}
+			if fetchErr := ag.Wait(); fetchErr != nil {
 				return fetchErr
 			}
-			entry := mapAccountPositions(upstream)
+			entry := newAccountPositions(append(mapBlendPositions(blend), mapXoxnoPositions(xoxno, markets)...), blend.Backstop)
 			entry.Address = addr
 			results[i] = entry
 			return nil
@@ -79,11 +107,11 @@ func (p *positionsService) GetAccountsPositions(ctx context.Context, addresses [
 	return results, nil
 }
 
-// mapAccountPositions shapes the upstream Blend positions into the response.
-func mapAccountPositions(upstream *wbtypes.BlendAccountPositions) *types.AccountPositions {
-	positions := make([]types.PoolPosition, 0, len(upstream.Pools))
+// mapBlendPositions shapes the upstream Blend pool positions into rows.
+func mapBlendPositions(upstream *wbtypes.BlendAccountPositions) []types.PoolPosition {
+	rows := make([]types.PoolPosition, 0, len(upstream.Pools))
 	for _, pool := range upstream.Pools {
-		positions = append(positions, types.PoolPosition{
+		rows = append(rows, types.PoolPosition{
 			Protocol:    "blend",
 			ID:          pool.PoolAddress,
 			Name:        pool.PoolName,
@@ -94,13 +122,18 @@ func mapAccountPositions(upstream *wbtypes.BlendAccountPositions) *types.Account
 			Blend:       mapBlendDetail(pool.Reserves),
 		})
 	}
+	return rows
+}
 
-	total, netAPY := accountAggregate(upstream.Pools, upstream.Backstop)
+// newAccountPositions assembles the response from already-mapped rows (any
+// protocol) and the account's Blend backstop deposits.
+func newAccountPositions(rows []types.PoolPosition, backstop []wbtypes.BlendBackstopPosition) *types.AccountPositions {
+	total, netAPY := accountAggregate(rows, backstop)
 	return &types.AccountPositions{
 		TotalValueUSD: total,
 		NetAPY:        netAPY,
-		Positions:     positions,
-		Backstop:      mapBackstop(upstream.Backstop),
+		Positions:     rows,
+		Backstop:      mapBackstop(backstop),
 	}
 }
 
@@ -194,13 +227,14 @@ func mapBlendDetail(reserves []wbtypes.BlendReservePosition) *types.BlendPositio
 //
 // NetAPY: mean of pool netApy weighted by pool suppliedUsd — the base the
 // upstream rate is defined over (blend-sdk-js: net dollars / total
-// supplied), so rate × base reproduces the per-pool dollar earnings.
-// Backstop deposits carry no interest APY (they earn BLND emissions,
-// reported per row), so they contribute to the total but not the rate.
-// Null when any pool's netApy or suppliedUsd is unavailable or the supplied
-// base is zero.
-func accountAggregate(pools []wbtypes.BlendPoolPosition, backstop []wbtypes.BlendBackstopPosition) (total *float64, netAPY *float64) {
-	if len(pools) == 0 && len(backstop) == 0 {
+// supplied), so rate × base reproduces the per-pool dollar earnings. XOXNO
+// rows carry a NetAPY computed over the same supplied-USD base, so both
+// protocols weight alike. Backstop deposits carry no interest APY (they earn
+// BLND emissions, reported per row), so they contribute to the total but not
+// the rate. Null when any pool's netApy or suppliedUsd is unavailable or the
+// supplied base is zero.
+func accountAggregate(positions []types.PoolPosition, backstop []wbtypes.BlendBackstopPosition) (total *float64, netAPY *float64) {
+	if len(positions) == 0 && len(backstop) == 0 {
 		zero := 0.0
 		return &zero, nil
 	}
@@ -209,17 +243,17 @@ func accountAggregate(pools []wbtypes.BlendPoolPosition, backstop []wbtypes.Blen
 	suppliedSum := 0.0
 	apyNumerator := 0.0
 	apyKnown := true
-	for _, pool := range pools {
-		if pool.UsdValue == nil {
+	for _, pool := range positions {
+		if pool.NetUSD == nil {
 			return nil, nil
 		}
-		sum += *pool.UsdValue
-		if pool.NetApy == nil || pool.SuppliedUsd == nil {
+		sum += *pool.NetUSD
+		if pool.NetAPY == nil || pool.SuppliedUSD == nil {
 			apyKnown = false
 			continue
 		}
-		apyNumerator += *pool.NetApy * *pool.SuppliedUsd
-		suppliedSum += *pool.SuppliedUsd
+		apyNumerator += *pool.NetAPY * *pool.SuppliedUSD
+		suppliedSum += *pool.SuppliedUSD
 	}
 	for _, b := range backstop {
 		if b.UsdValue == nil {

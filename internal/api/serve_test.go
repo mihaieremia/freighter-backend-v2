@@ -201,6 +201,7 @@ var walletBackendRoutes = []struct {
 	{"positions", http.MethodPost, "/api/v1/accounts/positions"},
 	{"blend-pools", http.MethodGet, "/api/v1/protocols/blend/pools"},
 	{"blend-earn-options", http.MethodGet, "/api/v1/protocols/blend/earn-options"},
+	{"xoxno-earn-options", http.MethodGet, "/api/v1/protocols/xoxno/earn-options"},
 }
 
 // TestApiServer_initHandlers_WalletBackendRoutesDisabledNotRegistered pins the off
@@ -277,6 +278,7 @@ func TestApiServer_initHandlers_WalletBackendRoutesGatedTogether(t *testing.T) {
 		"POST /api/v1/accounts/positions":             true,
 		"GET /api/v1/protocols/blend/pools":           true,
 		"GET /api/v1/protocols/blend/earn-options":    true,
+		"GET /api/v1/protocols/xoxno/earn-options":    true,
 	}, disabled, "exactly the wallet-backend-fronted routes must be disabled by the flag")
 }
 

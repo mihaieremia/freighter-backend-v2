@@ -130,6 +130,11 @@ type MockWalletBackendService struct {
 
 	GetBlendPoolsResult []wbtypes.BlendPool
 	GetBlendPoolsError  error
+
+	GetXoxnoLendingPositionsResult []wbtypes.XoxnoLendingAccount
+	GetXoxnoLendingPositionsError  error
+	GetXoxnoLendingMarketsResult   []wbtypes.XoxnoLendingMarket
+	GetXoxnoLendingMarketsError    error
 }
 
 func (m *MockWalletBackendService) Name() string {
@@ -208,12 +213,34 @@ func (m *MockPositionsService) GetAccountsPositions(ctx context.Context, address
 	return []*types.AccountPositions{}, nil
 }
 
-// MockBlendCatalogService stubs types.BlendCatalogService for handler tests.
+func (m *MockWalletBackendService) GetXoxnoLendingPositions(ctx context.Context, address, network string) ([]wbtypes.XoxnoLendingAccount, error) {
+	if m.GetXoxnoLendingPositionsError != nil {
+		return nil, m.GetXoxnoLendingPositionsError
+	}
+	if m.GetXoxnoLendingPositionsResult != nil {
+		return m.GetXoxnoLendingPositionsResult, nil
+	}
+	return []wbtypes.XoxnoLendingAccount{}, nil
+}
+
+func (m *MockWalletBackendService) GetXoxnoLendingMarkets(ctx context.Context, network string) ([]wbtypes.XoxnoLendingMarket, error) {
+	if m.GetXoxnoLendingMarketsError != nil {
+		return nil, m.GetXoxnoLendingMarketsError
+	}
+	if m.GetXoxnoLendingMarketsResult != nil {
+		return m.GetXoxnoLendingMarketsResult, nil
+	}
+	return []wbtypes.XoxnoLendingMarket{}, nil
+}
+
+// MockBlendCatalogService stubs types.BlendCatalogService for handler tests;
+// it also satisfies types.EarnCatalogService for either protocol's earn
+// handler.
 type MockBlendCatalogService struct {
 	GetPoolsResult *types.BlendPoolsCatalog
 	GetPoolsError  error
 
-	GetEarnOptionsResult *types.BlendEarnOptionsCatalog
+	GetEarnOptionsResult *types.EarnOptionsCatalog
 	GetEarnOptionsError  error
 }
 
@@ -229,14 +256,14 @@ func (m *MockBlendCatalogService) GetPools(ctx context.Context, network string) 
 	return &types.BlendPoolsCatalog{Pools: []types.BlendCatalogPool{}}, nil
 }
 
-func (m *MockBlendCatalogService) GetEarnOptions(ctx context.Context, network string) (*types.BlendEarnOptionsCatalog, error) {
+func (m *MockBlendCatalogService) GetEarnOptions(ctx context.Context, network string) (*types.EarnOptionsCatalog, error) {
 	if m.GetEarnOptionsError != nil {
 		return nil, m.GetEarnOptionsError
 	}
 	if m.GetEarnOptionsResult != nil {
 		return m.GetEarnOptionsResult, nil
 	}
-	return &types.BlendEarnOptionsCatalog{Options: []types.BlendEarnAssetOption{}}, nil
+	return &types.EarnOptionsCatalog{Options: []types.EarnAssetOption{}}, nil
 }
 
 type MockPricesService struct {

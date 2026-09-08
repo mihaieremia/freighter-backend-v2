@@ -1,5 +1,5 @@
 // ABOUTME: Response types for GET /api/v1/accounts/{address}/positions — the
-// ABOUTME: frontend-shaped view of an account's DeFi positions (Blend only today).
+// ABOUTME: frontend-shaped view of an account's DeFi positions (Blend and XOXNO lending).
 package types
 
 import "context"
@@ -41,10 +41,11 @@ type AccountPositions struct {
 
 // PoolPosition is one pool row. The common fields render a Position Home row
 // for any protocol; protocol-specific detail lives under a key named after
-// the protocol (only "blend" today), so adding a protocol later is additive.
+// the protocol ("blend" or "xoxno"), so adding a protocol is additive.
 type PoolPosition struct {
 	Protocol string `json:"protocol"`
-	// ID is the pool's contract address.
+	// ID is the pool's contract address for Blend, the position NFT token
+	// id for XOXNO.
 	ID string `json:"id"`
 	// Name is the pool's display name; null when the upstream metadata
 	// registry has no entry (clients fall back to a truncated ID).
@@ -58,6 +59,7 @@ type PoolPosition struct {
 	// blend-sdk-js convention the Blend UI shows).
 	NetAPY *float64             `json:"net_apy"`
 	Blend  *BlendPositionDetail `json:"blend,omitempty"`
+	Xoxno  *XoxnoPositionDetail `json:"xoxno,omitempty"`
 }
 
 // BlendPositionDetail is the Blend-specific detail for one pool. Reserve

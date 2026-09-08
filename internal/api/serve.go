@@ -228,13 +228,6 @@ func (s *ApiServer) routes() ([]route, error) {
 	}
 	whoamiHandler := handlers.NewWhoamiHandler()
 
-	positionsService := services.NewPositionsService(
-		s.walletBackendService,
-		s.cfg.AppConfig.WalletBackendBalanceConcurrency,
-		s.appMetrics.Service,
-	)
-	accountPositionsHandler := handlers.NewAccountPositionsHandler(positionsService, s.cfg.AppConfig.MaxBalanceAddresses)
-
 	blendCatalogService, err := services.NewBlendCatalogService(
 		s.walletBackendService,
 		s.redis,
@@ -246,6 +239,25 @@ func (s *ApiServer) routes() ([]route, error) {
 		return nil, fmt.Errorf("init blend catalog service: %w", err)
 	}
 	blendCatalogHandler := handlers.NewBlendCatalogHandler(blendCatalogService)
+	blendEarnOptionsHandler := handlers.NewEarnOptionsHandler("blend", blendCatalogService)
+
+	// The XOXNO catalog deliberately shares the Blend cache TTL config: both
+	// are market snapshots with the same freshness needs.
+	xoxnoCatalogService := services.NewXoxnoCatalogService(
+		s.walletBackendService,
+		s.redis,
+		time.Duration(s.cfg.BlendConfig.CatalogCacheTTLSeconds)*time.Second,
+		s.appMetrics.Service,
+	)
+	xoxnoEarnOptionsHandler := handlers.NewEarnOptionsHandler("xoxno", xoxnoCatalogService)
+
+	positionsService := services.NewPositionsService(
+		s.walletBackendService,
+		xoxnoCatalogService,
+		s.cfg.AppConfig.WalletBackendBalanceConcurrency,
+		s.appMetrics.Service,
+	)
+	accountPositionsHandler := handlers.NewAccountPositionsHandler(positionsService, s.cfg.AppConfig.MaxBalanceAddresses)
 
 	return []route{
 		// Health/liveness/readiness probes: gated=false, registered BARE — never
@@ -267,8 +279,8 @@ func (s *ApiServer) routes() ([]route, error) {
 		{http.MethodGet, "/api/v1/feature-flags", handlers.CustomHandler(featureFlagsHandler.GetFeatureFlags), true, true},
 		// The wallet-backend-fronted routes, config-gated together by
 		// --wallet-backend-routes-enabled. These are the routes that touch
-		// walletBackendService (balances, history, positions, and the Blend market
-		// catalog), and all fail identically when it is unconfigured:
+		// walletBackendService (balances, history, positions, and the Blend and
+		// XOXNO market catalogs), and all fail identically when it is unconfigured:
 		// configureNetworkClient returns nil and the handler errors before any network
 		// call, so every request 500s. wallet-backend is configured only in dev, so
 		// they are disabled in production until that upstream is wired up.
@@ -282,7 +294,8 @@ func (s *ApiServer) routes() ([]route, error) {
 		{http.MethodGet, "/api/v1/accounts/{address}/transactions", handlers.CustomHandler(accountHistoryHandler.GetAccountTransactions), true, s.cfg.AppConfig.WalletBackendRoutesEnabled},
 		{http.MethodPost, "/api/v1/accounts/positions", handlers.CustomHandler(accountPositionsHandler.GetAccountsPositions), true, s.cfg.AppConfig.WalletBackendRoutesEnabled},
 		{http.MethodGet, "/api/v1/protocols/blend/pools", handlers.CustomHandler(blendCatalogHandler.GetPools), true, s.cfg.AppConfig.WalletBackendRoutesEnabled},
-		{http.MethodGet, "/api/v1/protocols/blend/earn-options", handlers.CustomHandler(blendCatalogHandler.GetEarnOptions), true, s.cfg.AppConfig.WalletBackendRoutesEnabled},
+		{http.MethodGet, "/api/v1/protocols/blend/earn-options", handlers.CustomHandler(blendEarnOptionsHandler.GetEarnOptions), true, s.cfg.AppConfig.WalletBackendRoutesEnabled},
+		{http.MethodGet, "/api/v1/protocols/xoxno/earn-options", handlers.CustomHandler(xoxnoEarnOptionsHandler.GetEarnOptions), true, s.cfg.AppConfig.WalletBackendRoutesEnabled},
 
 		{http.MethodPost, "/api/v1/token-prices", handlers.CustomHandler(tokenPricesHandler.GetPrices), true, true},
 		{http.MethodGet, "/api/v1/auth/whoami", handlers.CustomHandler(whoamiHandler.Whoami), true, true},
