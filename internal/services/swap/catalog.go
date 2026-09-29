@@ -97,7 +97,7 @@ func (s *tokensService) catalogTokens(network string, rows []tokenRow) []types.C
 		if !ok {
 			continue
 		}
-		m.PriceUSD, m.Swappable = r.priceUSD, r.swappable
+		m.Decimals, m.PriceUSD, m.Swappable = r.decimals, r.priceUSD, r.swappable
 		out = append(out, m)
 	}
 	return out
@@ -153,6 +153,7 @@ func catalogRows(listed []listedToken, routable []aggregatorToken, prices map[st
 		decimals, routed := routableDecimals[t.Identifier]
 		out = append(out, tokenRow{
 			id:        t.Identifier,
+			decimals:  t.Decimals,
 			priceUSD:  catalogPrice(t, prices[t.Identifier]),
 			swappable: t.SwapListed && routed && decimals == t.Decimals,
 		})

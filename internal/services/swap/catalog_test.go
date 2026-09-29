@@ -123,3 +123,46 @@ func TestTokenCatalog_IsBoundedAndListsEachTokenOnce(t *testing.T) {
 	}
 	assert.Len(t, ids, len(got), "no id appears twice")
 }
+
+func TestTokenCatalog_DecimalsStayWithEachScopesRows(t *testing.T) {
+	t.Parallel()
+	st := newTokensStub(t)
+	svc, _ := newTokensService(st, time.Minute)
+	first, err := svc.GetSwapTokens(context.Background(), types.PUBLIC)
+	require.NoError(t, err)
+	require.Equal(t, 8, byID(first)[tokSolv].Decimals)
+
+	listed := listedFixture()
+	listed[2].Decimals = 7
+	st.listed.Store(listed)
+	catalog, err := svc.GetTokenCatalog(context.Background(), types.PUBLIC)
+	require.NoError(t, err)
+	assert.Equal(t, 7, catalogByID(catalog)[tokSolv].Decimals)
+	assert.False(t, catalogByID(catalog)[tokSolv].Swappable)
+
+	cached, err := svc.GetSwapTokens(context.Background(), types.PUBLIC)
+	require.NoError(t, err)
+	assert.Equal(t, first, cached, "the other scope cannot change a cached token's precision")
+}
+
+func TestTokenCatalog_ADegradedLargeRefreshKeepsCachedMetadata(t *testing.T) {
+	t.Parallel()
+	st := newTokensStub(t)
+	svc, _ := newTokensService(st, time.Minute)
+	now := time.Unix(1_700_000_000, 0)
+	svc.now = func() time.Time { return now }
+	first, err := svc.GetTokenCatalog(context.Background(), types.PUBLIC)
+	require.NoError(t, err)
+	require.NotEmpty(t, first)
+
+	listed := make([]listedToken, maxCatalogTokens+1)
+	for i := range listed {
+		listed[i] = listedToken{Identifier: testContractN(i), Ticker: "T"}
+	}
+	st.listed.Store(listed)
+	st.pricesFail.Store(true)
+	now = now.Add(2 * time.Minute)
+	stale, err := svc.GetTokenCatalog(context.Background(), types.PUBLIC)
+	require.NoError(t, err)
+	assert.Equal(t, first, stale, "failed optional prices preserve the complete catalog and its metadata")
+}

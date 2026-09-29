@@ -137,7 +137,7 @@ func (s *xoxnoSource) Quote(ctx context.Context, req types.SwapQuoteRequest) (_ 
 	if err != nil {
 		return nil, err
 	}
-	cand, err := validateXoxnoQuote(quote, p, srcAtoms, req.SlippagePercent, !needsTrustline)
+	cand, err := validateXoxnoQuote(quote, p, srcAtoms, req, !needsTrustline)
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +226,9 @@ func (s *xoxnoSource) QuoteInput(ctx context.Context, req types.SwapQuoteRequest
 	if err != nil {
 		return nil, err
 	}
+	if err := checkOutputDecimals(quote, p, req.DestDecimals); err != nil {
+		return nil, err
+	}
 	input, out := atoms(quote.AmountIn), atoms(quote.AmountOut)
 	if quote.Mode != "reverse" || quote.From != p.src || quote.To != p.dst ||
 		input == nil || out == nil || out.Cmp(destAtoms) < 0 {
@@ -249,7 +252,7 @@ func invalidQuote(format string, args ...any) error {
 
 // validateXoxnoQuote checks that the aggregator answered the question that was
 // asked. Anything that does not match is dropped, never trusted.
-func validateXoxnoQuote(q *xoxnoQuoteResponse, p xoxnoPair, srcAtoms *big.Int, slippagePercent float64, wantTx bool) (*candidate, error) {
+func validateXoxnoQuote(q *xoxnoQuoteResponse, p xoxnoPair, srcAtoms *big.Int, req types.SwapQuoteRequest, wantTx bool) (*candidate, error) {
 	if q.Mode != "forward" || q.From != p.src || q.To != p.dst {
 		return nil, invalidQuote("quote is for a different pair or mode")
 	}
@@ -257,17 +260,13 @@ func validateXoxnoQuote(q *xoxnoQuoteResponse, p xoxnoPair, srcAtoms *big.Int, s
 		return nil, invalidQuote("quote input %q differs from requested input", q.AmountIn)
 	}
 
-	out, minOut, err := checkSlippage(q, slippagePercent)
+	out, minOut, err := checkSlippage(q, req.SlippagePercent)
 	if err != nil {
 		return nil, err
 	}
 
-	// A classic destination is always quoted with 7 decimals.
-	if q.DecimalsOut == nil || *q.DecimalsOut < 0 || *q.DecimalsOut > utils.MaxAmountDecimals {
-		return nil, invalidQuote("quote output decimals are missing or out of range")
-	}
-	if p.dstAsset.isClassic() && *q.DecimalsOut != types.ClassicDecimals {
-		return nil, invalidQuote("classic asset quoted with %d decimals", *q.DecimalsOut)
+	if err := checkOutputDecimals(q, p, req.DestDecimals); err != nil {
+		return nil, err
 	}
 
 	if wantTx {
@@ -284,6 +283,21 @@ func validateXoxnoQuote(q *xoxnoQuoteResponse, p xoxnoPair, srcAtoms *big.Int, s
 		Route:         routeHops(q),
 		PriceImpact:   q.PriceImpact,
 	}, nil
+}
+
+// checkOutputDecimals binds both forward and reverse amounts to the requested
+// precision. A classic destination always uses 7 decimals.
+func checkOutputDecimals(q *xoxnoQuoteResponse, p xoxnoPair, requested int) error {
+	if q.DecimalsOut == nil || *q.DecimalsOut < 0 || *q.DecimalsOut > utils.MaxAmountDecimals {
+		return invalidQuote("quote output decimals are missing or out of range")
+	}
+	if p.dstAsset.isClassic() && *q.DecimalsOut != types.ClassicDecimals {
+		return invalidQuote("classic asset quoted with %d decimals", *q.DecimalsOut)
+	}
+	if *q.DecimalsOut != requested {
+		return invalidQuote("quote output decimals %d differ from requested %d", *q.DecimalsOut, requested)
+	}
+	return nil
 }
 
 // checkSlippage returns the quoted output and minimum output after requiring

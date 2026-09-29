@@ -143,6 +143,8 @@ func (s *ApiServer) initServices() error {
 		HorizonPubnetURL:  s.cfg.HorizonConfig.HorizonPubnetURL,
 		HorizonTestnetURL: s.cfg.HorizonConfig.HorizonTestnetURL,
 		Networks:          networks,
+		LifiEnabled:       s.cfg.SwapConfig.LifiEnabled,
+		LifiAPIKey:        s.cfg.SwapConfig.LifiAPIKey,
 		SourceTimeout:     s.cfg.SwapConfig.SourceTimeout,
 	}, s.appMetrics.Service)
 	s.swapTokensService = swap.NewTokensService(networks, stellarExpert, s.cfg.SwapConfig.TokenCacheTTL, s.appMetrics.Service)

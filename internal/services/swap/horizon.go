@@ -61,10 +61,13 @@ func (c *horizonClient) baseURL(net string) (string, error) {
 // getJSON GETs reqURL and decodes a 200 body into dest. Any other status
 // is returned for the caller to map; its body is drained so the connection is
 // reused.
-func getJSON(ctx context.Context, client *http.Client, reqURL string, dest any) (int, error) {
+func getJSON(ctx context.Context, client *http.Client, reqURL string, dest any, headers ...http.Header) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return 0, fmt.Errorf("building swap source request: %w", err)
+	}
+	if len(headers) > 0 {
+		req.Header = headers[0].Clone()
 	}
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)

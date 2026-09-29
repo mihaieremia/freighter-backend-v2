@@ -14,6 +14,7 @@ var ErrSwapNoRoute = errors.New("no swap route found")
 const (
 	SwapSourceHorizon = "horizon"
 	SwapSourceXoxno   = "xoxno"
+	SwapSourceLifi    = "lifi"
 )
 
 // SwapQuoteRequest is a validated request for the best route from SourceAsset

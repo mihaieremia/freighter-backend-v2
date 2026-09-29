@@ -101,15 +101,18 @@ func askSources[T any](ctx context.Context, sources []source, timeout time.Durat
 func (s *quoteService) GetBestQuote(ctx context.Context, req types.SwapQuoteRequest) (_ *types.SwapQuote, err error) {
 	defer recordQuoteCall(s.svcMetrics, "GetBestQuote", req.Network, time.Now(), &err)
 
+	timeout := s.sourceTimeout
 	if req.DestAmount != "" {
-		input, err := s.sizeInput(ctx, req)
+		// Receive quotes need two rounds; keep their total within one source budget.
+		timeout /= 2
+		input, err := s.sizeInput(ctx, req, timeout)
 		if err != nil {
 			return nil, err
 		}
 		req.SourceAmount = formatAtomic(input, req.SourceDecimals)
 	}
 
-	cands, errs := askSources(ctx, s.sources, s.sourceTimeout, func(c context.Context, src source) (*candidate, error) {
+	cands, errs := askSources(ctx, s.sources, timeout, func(c context.Context, src source) (*candidate, error) {
 		return src.Quote(c, req)
 	})
 	if err := ctx.Err(); err != nil {
@@ -142,8 +145,8 @@ func (s *quoteService) GetBestQuote(ctx context.Context, req types.SwapQuoteRequ
 // req.DestAmount. Sizing is only a starting point: the executable quote is then
 // asked for at that input, so every venue competes on the same amount and the
 // transaction is built for a fixed input with the user's slippage on the output.
-func (s *quoteService) sizeInput(ctx context.Context, req types.SwapQuoteRequest) (*big.Int, error) {
-	inputs, errs := askSources(ctx, s.sources, s.sourceTimeout, func(c context.Context, src source) (*big.Int, error) {
+func (s *quoteService) sizeInput(ctx context.Context, req types.SwapQuoteRequest, timeout time.Duration) (*big.Int, error) {
+	inputs, errs := askSources(ctx, s.sources, timeout, func(c context.Context, src source) (*big.Int, error) {
 		return src.QuoteInput(c, req)
 	})
 	if err := ctx.Err(); err != nil {
@@ -256,6 +259,8 @@ func conversionRate(srcAtoms *big.Int, srcDecimals int, dstAtoms *big.Int, dstDe
 
 // Config configures the swap quote service.
 type Config struct {
+	LifiEnabled       bool
+	LifiAPIKey        string
 	HorizonPubnetURL  string
 	HorizonTestnetURL string
 	// Networks holds the aggregator settings per network. Empty switches the
@@ -265,14 +270,17 @@ type Config struct {
 	SourceTimeout time.Duration
 }
 
-// NewQuoteService wires the classic DEX source and, when any network has one
-// configured, the XOXNO aggregator source. Horizon comes first so an exact tie
+// NewQuoteService wires Horizon and the enabled XOXNO/LI.FI sources.
+// Horizon comes first so an exact tie
 // resolves to the cheaper classic transaction.
 func NewQuoteService(cfg Config, svcMetrics *metrics.Service) types.SwapQuoteService {
 	horizon := newHorizonClient(cfg.HorizonPubnetURL, cfg.HorizonTestnetURL)
 	sources := []source{newHorizonSource(horizon, svcMetrics)}
 	if len(cfg.Networks) > 0 {
 		sources = append(sources, newXoxnoSource(cfg.Networks, horizon, svcMetrics))
+	}
+	if cfg.LifiEnabled {
+		sources = append(sources, newLifiSource(cfg.LifiAPIKey, horizon, svcMetrics))
 	}
 	return newQuoteService(sources, cfg.SourceTimeout, svcMetrics)
 }

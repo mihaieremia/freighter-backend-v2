@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -51,12 +52,15 @@ func prepareEnvelope(envelopeB64 string, want envelopeExpectation, seq int64, ma
 
 	// Every authorization entry must be signed by the transaction source and
 	// spend at most the input amount in total.
+	if len(invoke.Auth) == 0 {
+		return "", 0, errors.New("envelope has no sender authorization")
+	}
 	spent := new(big.Int)
 	for _, entry := range invoke.Auth {
 		if entry.Credentials.Type != xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount {
 			return "", 0, errors.New("authorization entry needs a signature the wallet does not produce")
 		}
-		if err := checkAuthTree(entry.RootInvocation, want, spent); err != nil {
+		if err := checkAuthTree(entry.RootInvocation, invoke.HostFunction.InvokeContract, want, spent); err != nil {
 			return "", 0, err
 		}
 	}
@@ -152,42 +156,38 @@ func checkRouterCall(call *xdr.InvokeContractArgs, want envelopeExpectation) err
 	return checkRoutePayload(*call.Args[2].Bytes, want.SrcToken, want.DstToken, want.MinOut)
 }
 
-// checkAuthTree walks an authorization tree. The sender's signature approves
-// every call beneath a source-account entry, so only transfers of the source
-// token out of the sender, totalling at most the input amount, may touch the
-// sender's funds; approvals and burns are rejected outright.
-func checkAuthTree(node xdr.SorobanAuthorizedInvocation, want envelopeExpectation, spent *big.Int) error {
-	if fn := node.Function.ContractFn; node.Function.Type == xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn && fn != nil {
-		switch string(fn.FunctionName) {
-		case "transfer":
-			if err := checkSenderTransfer(fn, want, spent); err != nil {
-				return err
-			}
-		case "approve", "burn", "burn_from", "transfer_from":
-			return fmt.Errorf("authorization contains a forbidden %q call", fn.FunctionName)
-		}
+// checkAuthTree allows only the approved router invocation and direct source
+// token transfers from the sender into that router. Unknown calls fail closed.
+func checkAuthTree(node xdr.SorobanAuthorizedInvocation, call *xdr.InvokeContractArgs, want envelopeExpectation, spent *big.Int) error {
+	if node.Function.Type != xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn || !reflect.DeepEqual(node.Function.ContractFn, call) {
+		return errors.New("authorization root differs from the approved router invocation")
 	}
 	for _, sub := range node.SubInvocations {
-		if err := checkAuthTree(sub, want, spent); err != nil {
+		fn := sub.Function.ContractFn
+		if sub.Function.Type != xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn || fn == nil || string(fn.FunctionName) != "transfer" || len(sub.SubInvocations) != 0 {
+			return errors.New("authorization contains a call other than a source token transfer")
+		}
+		if err := checkSenderTransfer(fn, want, spent); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// checkSenderTransfer adds a transfer out of the sender to spent. A transfer
-// from anyone else is not the sender's money, so it is ignored; one whose
-// sender cannot be read is rejected.
+// checkSenderTransfer adds an allowed sender-to-router source transfer to spent.
 func checkSenderTransfer(fn *xdr.InvokeContractArgs, want envelopeExpectation, spent *big.Int) error {
 	if len(fn.Args) != 3 {
-		return nil
+		return errors.New("authorization transfer does not have three arguments")
 	}
 	from, err := scValAddress(fn.Args[0])
 	if err != nil {
 		return errors.New("authorization transfer sender is unreadable")
 	}
 	if from != want.Sender {
-		return nil
+		return errors.New("authorization transfer is not from the sender")
+	}
+	if to, err := scValAddress(fn.Args[1]); err != nil || to != want.Router {
+		return errors.New("authorization transfer is not into the router")
 	}
 	if token, err := fn.ContractAddress.String(); err != nil || token != want.SrcToken {
 		return errors.New("authorization moves a token other than the source token")

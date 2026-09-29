@@ -138,9 +138,11 @@ type HorizonConfig struct {
 }
 
 // SwapConfig configures the swap quote route. Horizon is always a source; the
-// XOXNO aggregator is added when XoxnoEnabled is set and a network has a quote
-// URL and router.
+// aggregators are independently opt-in. XOXNO needs network URLs and routers;
+// LI.FI uses its pinned pubnet deployment and a backend-only API key.
 type SwapConfig struct {
+	LifiEnabled              bool
+	LifiAPIKey               string
 	XoxnoEnabled             bool
 	XoxnoPubnetQuoteURL      string
 	XoxnoPubnetRouter        string

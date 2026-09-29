@@ -18,19 +18,27 @@ import (
 )
 
 type fakeSwapSource struct {
-	name     string
-	cand     *candidate
-	quoteErr error
-	wait     time.Duration
-	input    *big.Int
-	inputErr error
+	name      string
+	cand      *candidate
+	quoteErr  error
+	wait      time.Duration
+	inputWait time.Duration
+	input     *big.Int
+	inputErr  error
 	// quoted records the request Quote last received.
 	quoted types.SwapQuoteRequest
 	// gaveUp is set when Quote saw its context end while it waited.
 	gaveUp atomic.Bool
 }
 
-func (f *fakeSwapSource) QuoteInput(context.Context, types.SwapQuoteRequest) (*big.Int, error) {
+func (f *fakeSwapSource) QuoteInput(ctx context.Context, _ types.SwapQuoteRequest) (*big.Int, error) {
+	if f.inputWait > 0 {
+		select {
+		case <-time.After(f.inputWait):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	return f.input, f.inputErr
 }
 
@@ -223,6 +231,21 @@ func TestFormatAtomic(t *testing.T) {
 }
 
 var exactOutReq = types.SwapQuoteRequest{Network: types.PUBLIC, DestAmount: "5", DestDecimals: 7, SourceDecimals: 7, SlippagePercent: 1}
+
+func TestGetBestQuote_ExactOutKeepsHealthyAnswerWhenOneSourceTimesOutInBothRounds(t *testing.T) {
+	t.Parallel()
+	healthy := &fakeSwapSource{name: "horizon", input: big.NewInt(100000000), cand: newCandidate("horizon", 50000000)}
+	slow := &fakeSwapSource{name: "xoxno", inputWait: time.Minute, wait: time.Minute}
+	svc := newQuoteService([]source{healthy, slow}, 200*time.Millisecond, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	q, err := svc.GetBestQuote(ctx, exactOutReq)
+	require.NoError(t, err)
+	assert.Equal(t, "horizon", q.Source)
+	assert.Equal(t, "10.0000000", healthy.quoted.SourceAmount)
+	assert.Equal(t, altTimeout, q.Alternatives[1].Error)
+}
 
 func TestGetBestQuote_ExactOutSizesTheInputThenQuotesForwardAtIt(t *testing.T) {
 	t.Parallel()

@@ -59,6 +59,7 @@ func routableFixture() []aggregatorToken {
 type tokensStub struct {
 	list, aggregator *httptest.Server
 	listCalls        atomic.Int32
+	listed           atomic.Value // []listedToken
 	fail             atomic.Bool
 	// slow holds the token list request until the test ends.
 	slow    atomic.Bool
@@ -71,6 +72,7 @@ type tokensStub struct {
 func newTokensStub(t *testing.T) *tokensStub {
 	t.Helper()
 	st := &tokensStub{release: make(chan struct{})}
+	st.listed.Store(listedFixture())
 	st.list = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		st.listCalls.Add(1)
 		if st.slow.Load() {
@@ -83,7 +85,7 @@ func newTokensStub(t *testing.T) *tokensStub {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(listedFixture())
+		_ = json.NewEncoder(w).Encode(st.listed.Load())
 	}))
 	st.aggregator = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/prices" {
@@ -202,7 +204,7 @@ func TestSwapTokens_ARefreshSurvivesTheCallerGivingUp(t *testing.T) {
 	assert.Equal(t, int32(1), st.listCalls.Load(), "the second caller shares the first refresh")
 }
 
-func TestSwapTokens_RemembersMetadataForGoodAndBoundsIt(t *testing.T) {
+func TestSwapTokens_RemembersMetadataForGood(t *testing.T) {
 	t.Parallel()
 	svc, _ := newTokensService(newTokensStub(t), time.Minute)
 
@@ -220,7 +222,30 @@ func TestSwapTokens_RemembersMetadataForGoodAndBoundsIt(t *testing.T) {
 		many = append(many, listedToken{Identifier: testContractN(i), Ticker: "T"})
 	}
 	svc.remember(types.PUBLIC, many)
-	assert.Len(t, svc.meta[types.PUBLIC], len(many), "past the bound only the current list is kept")
+	assert.Len(t, svc.meta[types.PUBLIC], len(many)+8, "metadata survives a large replacement list")
+	assert.Equal(t, "USDC", svc.meta[types.PUBLIC][tokUSDC].Code)
+}
+
+func TestSwapTokens_UsesCorrectedRoutableDecimals(t *testing.T) {
+	t.Parallel()
+	st := newTokensStub(t)
+	listed := listedFixture()
+	listed[2].Decimals = 7 // The aggregator uses 8 for this Soroban token.
+	st.listed.Store(listed)
+	svc, _ := newTokensService(st, time.Minute)
+	now := time.Unix(1_700_000_000, 0)
+	svc.now = func() time.Time { return now }
+
+	first, err := svc.GetSwapTokens(context.Background(), types.PUBLIC)
+	require.NoError(t, err)
+	assert.NotContains(t, byID(first), tokSolv)
+
+	st.listed.Store(listedFixture())
+	now = now.Add(2 * time.Minute)
+	corrected, err := svc.GetSwapTokens(context.Background(), types.PUBLIC)
+	require.NoError(t, err)
+	require.Contains(t, byID(corrected), tokSolv)
+	assert.Equal(t, 8, byID(corrected)[tokSolv].Decimals)
 }
 
 // tokenList is one of the two cached lists a tokensService serves. Both follow

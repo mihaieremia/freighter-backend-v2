@@ -113,7 +113,7 @@ func newXoxnoFixture(t *testing.T) (*xoxnoFixture, *xoxnoSource, types.SwapQuote
 	src.now = func() time.Time { return time.Unix(1_700_000_000, 0) }
 	req := types.SwapQuoteRequest{
 		Network: types.PUBLIC, SourceAsset: "XLM", DestAsset: "USDC:" + testIssuer,
-		SourceAmount: "100", SourceDecimals: 7, Sender: testSender, SlippagePercent: 1, TimeoutSeconds: 180,
+		SourceAmount: "100", SourceDecimals: 7, DestDecimals: 7, Sender: testSender, SlippagePercent: 1, TimeoutSeconds: 180,
 	}
 	return f, src, req
 }
@@ -250,6 +250,7 @@ func TestXoxnoSource_SorobanTokenUsesRequestedDecimals(t *testing.T) {
 	f, src, req := newXoxnoFixture(t)
 	tok := testContract(6)
 	req.DestAsset = tok
+	req.DestDecimals = 18
 	f.quote["to"] = tok
 	f.quote["decimalsOut"] = 18
 	f.quote["amountOut"] = "160000000000"
@@ -264,6 +265,10 @@ func TestXoxnoSource_SorobanTokenUsesRequestedDecimals(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 18, c.DestDecimals)
 	assert.Equal(t, "160000000000", c.DestAmount.String())
+
+	req.DestDecimals = 7
+	_, err = src.Quote(context.Background(), req)
+	assert.ErrorIs(t, err, errInvalidQuote, "the output precision must match the request")
 }
 
 func buildPayloadTokens(t *testing.T, in, out string, minOut int64) []byte {
@@ -305,6 +310,8 @@ func TestXoxnoSource_QuoteInputDropsAnswersToAnotherQuestion(t *testing.T) {
 		"garbage input":    func(f *xoxnoFixture) { f.quote["amountIn"] = "lots" },
 		"output below ask": func(f *xoxnoFixture) { f.quote["amountOut"] = "22999999" },
 		"garbage output":   func(f *xoxnoFixture) { f.quote["amountOut"] = "x" },
+		"wrong decimals":   func(f *xoxnoFixture) { f.quote["decimalsOut"] = 6 },
+		"missing decimals": func(f *xoxnoFixture) { delete(f.quote, "decimalsOut") },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -315,6 +322,17 @@ func TestXoxnoSource_QuoteInputDropsAnswersToAnotherQuestion(t *testing.T) {
 			assert.ErrorIs(t, err, errInvalidQuote)
 		})
 	}
+}
+
+func TestXoxnoSource_QuoteInputRejectsSorobanOutputWithDifferentDecimals(t *testing.T) {
+	t.Parallel()
+	f, src, req := newReverseFixture(t)
+	req.DestAsset, req.DestDecimals = testContract(6), 18
+	f.quote["to"] = req.DestAsset
+	f.quote["amountOut"] = "2300000000000000000"
+
+	_, err := src.QuoteInput(context.Background(), req)
+	assert.ErrorIs(t, err, errInvalidQuote)
 }
 
 func TestXoxnoSource_QuoteInputStatusesAndUnconfiguredNetwork(t *testing.T) {

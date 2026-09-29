@@ -19,13 +19,19 @@ func i128Val(n int64) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &xdr.Int128Parts{Hi: 0, Lo: xdr.Uint64(n)}}
 }
 
-func rootNode(subs ...xdr.SorobanAuthorizedInvocation) xdr.SorobanAuthorizedInvocation {
+func rootNode(t *testing.T, subs ...xdr.SorobanAuthorizedInvocation) xdr.SorobanAuthorizedInvocation {
+	payload := xdr.ScBytes(goodPayload(t))
 	return xdr.SorobanAuthorizedInvocation{
 		Function: xdr.SorobanAuthorizedFunction{
 			Type: xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn,
 			ContractFn: &xdr.InvokeContractArgs{
 				ContractAddress: mustAddr(utils.ScAddressFromContractString(testContract(2))),
 				FunctionName:    routerFunction,
+				Args: []xdr.ScVal{
+					addrVal(mustAddr(utils.ScAddressFromAccountString(testSender))),
+					i128Val(100_0000000),
+					{Type: xdr.ScValTypeScvBytes, Bytes: &payload},
+				},
 			},
 		},
 		SubInvocations: subs,
@@ -38,7 +44,7 @@ func transferNode(token, from string, amount int64) xdr.SorobanAuthorizedInvocat
 		ContractFn: &xdr.InvokeContractArgs{
 			ContractAddress: mustAddr(utils.ScAddressFromContractString(token)),
 			FunctionName:    "transfer",
-			Args:            []xdr.ScVal{addrVal(mustAddr(utils.ScAddressFromAccountString(from))), addrVal(mustAddr(utils.ScAddressFromContractString(testContract(9)))), i128Val(amount)},
+			Args:            []xdr.ScVal{addrVal(mustAddr(utils.ScAddressFromAccountString(from))), addrVal(mustAddr(utils.ScAddressFromContractString(testContract(2)))), i128Val(amount)},
 		},
 	}}
 }
@@ -124,6 +130,14 @@ func buildEnvelope(t *testing.T, o envOpts) string {
 			i128Val(o.amount),
 			{Type: xdr.ScValTypeScvBytes, Bytes: &payloadBytes},
 		},
+	}
+	if o.auth == nil {
+		root := rootNode(t)
+		root.Function.ContractFn = call
+		o.auth = []xdr.SorobanAuthorizationEntry{{
+			Credentials:    xdr.SorobanCredentials{Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount},
+			RootInvocation: root,
+		}}
 	}
 	op := xdr.Operation{Body: xdr.OperationBody{
 		Type: xdr.OperationTypeInvokeHostFunction,
@@ -233,24 +247,59 @@ func TestPrepareSwapEnvelope_Rejects(t *testing.T) {
 					Type:    xdr.SorobanCredentialsTypeSorobanCredentialsAddress,
 					Address: &xdr.SorobanAddressCredentials{Address: mustAddr(utils.ScAddressFromAccountString(testSender)), Signature: xdr.ScVal{Type: xdr.ScValTypeScvVoid}},
 				},
-				RootInvocation: rootNode(),
+				RootInvocation: rootNode(t),
 			}}
 		},
-		"other token moved":   func(o *envOpts) { o.auth = sourceAcctAuth(rootNode(transferNode(other, testSender, 1))) },
-		"transfer over input": func(o *envOpts) { o.auth = sourceAcctAuth(rootNode(transferNode(src, testSender, 100_0000001))) },
+		"other token moved":   func(o *envOpts) { o.auth = sourceAcctAuth(rootNode(t, transferNode(other, testSender, 1))) },
+		"transfer over input": func(o *envOpts) { o.auth = sourceAcctAuth(rootNode(t, transferNode(src, testSender, 100_0000001))) },
 		"transfers add up": func(o *envOpts) {
-			o.auth = sourceAcctAuth(rootNode(transferNode(src, testSender, 60_0000000), transferNode(src, testSender, 60_0000000)))
+			o.auth = sourceAcctAuth(rootNode(t, transferNode(src, testSender, 60_0000000), transferNode(src, testSender, 60_0000000)))
 		},
 		"transfer sender unreadable": func(o *envOpts) {
 			n := transferNode(src, testSender, 1)
 			n.Function.ContractFn.Args[0] = i128Val(1)
-			o.auth = sourceAcctAuth(rootNode(n))
+			o.auth = sourceAcctAuth(rootNode(t, n))
 		},
 		"nested approve": func(o *envOpts) {
 			n := transferNode(src, testSender, 1)
 			n.Function.ContractFn.FunctionName = "approve"
-			o.auth = sourceAcctAuth(rootNode(rootNode(n)))
+			o.auth = sourceAcctAuth(rootNode(t, rootNode(t, n)))
 		},
+		"unknown authorized call": func(o *envOpts) {
+			n := transferNode(other, testSender, 1)
+			n.Function.ContractFn.FunctionName = "set_admin"
+			n.Function.ContractFn.Args = []xdr.ScVal{addrVal(mustAddr(utils.ScAddressFromAccountString(testIssuer)))}
+			o.auth = sourceAcctAuth(rootNode(t, n))
+		},
+		"other authorization root": func(o *envOpts) {
+			n := rootNode(t)
+			n.Function.ContractFn.ContractAddress = mustAddr(utils.ScAddressFromContractString(other))
+			o.auth = sourceAcctAuth(n)
+		},
+		"authorization root different amount": func(o *envOpts) {
+			n := rootNode(t)
+			n.Function.ContractFn.Args[1] = i128Val(1)
+			o.auth = sourceAcctAuth(n)
+		},
+		"malformed transfer": func(o *envOpts) {
+			n := transferNode(src, testSender, 1)
+			n.Function.ContractFn.Args = n.Function.ContractFn.Args[:2]
+			o.auth = sourceAcctAuth(rootNode(t, n))
+		},
+		"transfer to other destination": func(o *envOpts) {
+			n := transferNode(src, testSender, 1)
+			n.Function.ContractFn.Args[1] = addrVal(mustAddr(utils.ScAddressFromContractString(testContract(9))))
+			o.auth = sourceAcctAuth(rootNode(t, n))
+		},
+		"transfer from other sender": func(o *envOpts) {
+			o.auth = sourceAcctAuth(rootNode(t, transferNode(src, testIssuer, 1)))
+		},
+		"nested transfer": func(o *envOpts) {
+			n := transferNode(src, testSender, 1)
+			n.SubInvocations = []xdr.SorobanAuthorizedInvocation{transferNode(src, testSender, 1)}
+			o.auth = sourceAcctAuth(rootNode(t, n))
+		},
+		"no authorization": func(o *envOpts) { o.auth = []xdr.SorobanAuthorizationEntry{} },
 	}
 	exact := map[string]string{"transfer sender unreadable": "authorization transfer sender is unreadable"}
 	for name, mutate := range cases {
@@ -275,10 +324,9 @@ func TestPrepareSwapEnvelope_Accepts(t *testing.T) {
 		"transfers up to the exact input": func(o *envOpts) {
 			o.auth = []xdr.SorobanAuthorizationEntry{{
 				Credentials: xdr.SorobanCredentials{Type: xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount},
-				RootInvocation: rootNode(
+				RootInvocation: rootNode(t,
 					transferNode(src, testSender, 60_0000000),
 					transferNode(src, testSender, 40_0000000),
-					transferNode(testContract(4), testIssuer, 5), // someone else's funds
 				),
 			}}
 		},

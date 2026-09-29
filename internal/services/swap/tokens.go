@@ -29,10 +29,11 @@ const (
 	maxPriceAge = 3 * time.Minute
 )
 
-// tokenRow is the part of a listed token that changes: its price and whether
-// the aggregator can swap it. Its position in a list is part of it too.
+// tokenRow keeps a fetched token's price, precision and swappability
+// together. Its position in a list is part of it too.
 type tokenRow struct {
 	id        string
+	decimals  int
 	priceUSD  float64
 	swappable bool
 }
@@ -46,7 +47,8 @@ type tokensCacheEntry struct {
 // tokensService lists the swap-listed tokens the aggregator can route. Stellar
 // Expert says which are classic assets (a Stellar Asset Contract names the asset
 // it wraps). A token's metadata and wrapped asset are kept for good; only its
-// price, swappability and place in the list expire with the cache TTL.
+// fetched precision, price, swappability and place in the list expire with the
+// cache TTL.
 type tokensService struct {
 	networks   map[string]Network
 	contracts  types.StellarExpertService
@@ -60,8 +62,8 @@ type tokensService struct {
 	cache map[string]tokensCacheEntry
 	// catalogCache holds the scope=all catalog, kept apart from the swap list.
 	catalogCache map[string]tokensCacheEntry
-	// meta holds each network's token metadata by contract id, as first seen. It
-	// is bounded by the longest list seen, and never below maxCatalogTokens.
+	// meta holds each network's token metadata by contract id for the process
+	// lifetime. Fetched precision belongs to each row instead.
 	meta map[string]map[string]types.CatalogToken
 	// assets maps network+contract to the classic asset it wraps, "" for none.
 	assets map[string]string
@@ -185,8 +187,8 @@ func (s *tokensService) agedRows(e tokensCacheEntry) []tokenRow {
 	return rows
 }
 
-// remember records the metadata of every listed token not seen before. Past
-// maxCatalogTokens it also forgets the tokens the list no longer carries.
+// remember records the metadata of every listed token not seen before. Cached
+// rows may still refer to it after a token leaves the upstream list.
 func (s *tokensService) remember(network string, listed []listedToken) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,21 +197,12 @@ func (s *tokensService) remember(network string, listed []listedToken) {
 		known = map[string]types.CatalogToken{}
 		s.meta[network] = known
 	}
-	current := make(map[string]struct{}, len(listed))
 	for _, t := range listed {
 		if !hasMetadata(t) {
 			continue
 		}
-		current[t.Identifier] = struct{}{}
 		if _, ok := known[t.Identifier]; !ok {
 			known[t.Identifier] = types.CatalogToken{ID: t.Identifier, Code: t.Ticker, Name: t.Name, Decimals: t.Decimals, IconURL: t.PNGURL}
-		}
-	}
-	if len(known) > maxCatalogTokens {
-		for id := range known {
-			if _, ok := current[id]; !ok {
-				delete(known, id)
-			}
 		}
 	}
 }
@@ -225,6 +218,7 @@ func (s *tokensService) swapTokens(network string, rows []tokenRow) []types.Swap
 		if !ok {
 			continue
 		}
+		meta.Decimals = r.decimals
 		wrapped, ok := s.assets[network+":"+r.id]
 		if !ok {
 			continue
@@ -287,7 +281,7 @@ func swapRows(listed []listedToken, routable []aggregatorToken) []tokenRow {
 		// The aggregator's decimals decide how an amount is read, so a list that
 		// disagrees with it is not trusted.
 		if ok && hasMetadata(t) && t.SwapListed && t.USDPrice > 0 && decimals == t.Decimals {
-			out = append(out, tokenRow{id: t.Identifier, priceUSD: t.USDPrice, swappable: true})
+			out = append(out, tokenRow{id: t.Identifier, decimals: t.Decimals, priceUSD: t.USDPrice, swappable: true})
 		}
 	}
 	return out
