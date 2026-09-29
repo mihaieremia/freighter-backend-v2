@@ -13,6 +13,7 @@ type Config struct {
 	RedisConfig         RedisConfig
 	DatabaseConfig      DatabaseConfig
 	HorizonConfig       HorizonConfig
+	SwapConfig          SwapConfig
 	PricesConfig        PricesConfig
 	BlockaidConfig      BlockaidConfig
 	CoinbaseConfig      CoinbaseConfig
@@ -134,6 +135,21 @@ func (c DatabaseConfig) ValidatePoolConfig() error {
 type HorizonConfig struct {
 	HorizonPubnetURL  string
 	HorizonTestnetURL string
+}
+
+// SwapConfig configures the swap quote route. Horizon is always a source; the
+// XOXNO aggregator is added when XoxnoEnabled is set and a network has a quote
+// URL and router.
+type SwapConfig struct {
+	XoxnoEnabled             bool
+	XoxnoPubnetQuoteURL      string
+	XoxnoPubnetRouter        string
+	XoxnoTestnetQuoteURL     string
+	XoxnoTestnetRouter       string
+	XoxnoPubnetTokenListURL  string
+	XoxnoTestnetTokenListURL string
+	SourceTimeout            time.Duration
+	TokenCacheTTL            time.Duration
 }
 
 type PricesConfig struct {

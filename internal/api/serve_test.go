@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +27,7 @@ import (
 	"github.com/stellar/freighter-backend-v2/internal/auth/authtest"
 	"github.com/stellar/freighter-backend-v2/internal/config"
 	"github.com/stellar/freighter-backend-v2/internal/metrics"
+	"github.com/stellar/freighter-backend-v2/internal/services/swap"
 	"github.com/stellar/freighter-backend-v2/internal/types"
 )
 
@@ -470,4 +474,90 @@ func TestApiServer_initHandlers_AllUserFacingRoutesGatedInStrict(t *testing.T) {
 			rt.method, rt.pattern)
 	}
 	require.Positive(t, gated, "expected routes() to contain at least one gated route")
+}
+
+func TestApiServer_xoxnoSwapNetworks(t *testing.T) {
+	t.Parallel()
+
+	s := &ApiServer{cfg: &config.Config{SwapConfig: config.SwapConfig{
+		XoxnoEnabled:             true,
+		XoxnoPubnetQuoteURL:      "https://quote.example",
+		XoxnoPubnetRouter:        "CPUBROUTER",
+		XoxnoPubnetTokenListURL:  "https://tokens.example/pubnet",
+		XoxnoTestnetQuoteURL:     "https://testnet-quote.example",
+		XoxnoTestnetRouter:       "CTESTROUTER",
+		XoxnoTestnetTokenListURL: "https://tokens.example/testnet",
+	}}}
+	assert.Equal(t, map[string]swap.Network{
+		types.PUBLIC:  {QuoteURL: "https://quote.example", Router: "CPUBROUTER", TokenListURL: "https://tokens.example/pubnet"},
+		types.TESTNET: {QuoteURL: "https://testnet-quote.example", Router: "CTESTROUTER", TokenListURL: "https://tokens.example/testnet"},
+	}, s.xoxnoSwapNetworks())
+}
+
+func TestApiServer_SwapWithTheXoxnoSourceOffAsksOnlyHorizon(t *testing.T) {
+	t.Parallel()
+
+	// One counter serves as both the XOXNO and the Stellar Expert host.
+	var xoxnoCalls, horizonCalls atomic.Int32
+	xoxno := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		xoxnoCalls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(xoxno.Close)
+	horizon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		horizonCalls.Add(1)
+		_, _ = w.Write([]byte(`{"_embedded":{"records":[{"destination_amount":"12.3456789","path":[]}]}}`))
+	}))
+	t.Cleanup(horizon.Close)
+
+	cfg := testCfg("permissive")
+	cfg.AppConfig.WalletBackendBalanceConcurrency = 10
+	cfg.PricesConfig = config.PricesConfig{StellarExpertAPIKey: "test-key", StellarExpertPubnetURL: xoxno.URL, StellarExpertTestnetURL: xoxno.URL}
+	cfg.HorizonConfig = config.HorizonConfig{HorizonPubnetURL: horizon.URL, HorizonTestnetURL: horizon.URL}
+	cfg.SwapConfig = config.SwapConfig{
+		XoxnoEnabled:             false,
+		XoxnoPubnetQuoteURL:      xoxno.URL,
+		XoxnoPubnetRouter:        "CPUBROUTER",
+		XoxnoPubnetTokenListURL:  xoxno.URL + "/stellar/tokens",
+		XoxnoTestnetQuoteURL:     xoxno.URL,
+		XoxnoTestnetRouter:       "CTESTROUTER",
+		XoxnoTestnetTokenListURL: xoxno.URL + "/stellar/tokens",
+		SourceTimeout:            time.Second,
+		TokenCacheTTL:            time.Minute,
+	}
+	s := newTestAPIServer(t, cfg)
+	require.NoError(t, s.initServices())
+	mux, err := s.initHandlers()
+	require.NoError(t, err)
+
+	body := `{"sourceAsset":"XLM","destAsset":"USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN","sourceAmount":"100","sender":"GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H","slippagePercent":1}`
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/swap/quote?network=PUBLIC", strings.NewReader(body)))
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	var quote struct {
+		Data types.SwapQuote `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &quote))
+	require.Len(t, quote.Data.Alternatives, 1)
+	assert.Equal(t, "horizon", quote.Data.Alternatives[0].Source)
+	assert.Positive(t, horizonCalls.Load())
+
+	for _, target := range []string{
+		"/api/v1/swap/tokens?network=PUBLIC",
+		"/api/v1/swap/tokens?network=TESTNET",
+		"/api/v1/swap/tokens?network=PUBLIC&scope=all",
+		"/api/v1/swap/tokens?network=TESTNET&scope=all",
+	} {
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, target, nil))
+		assert.JSONEq(t, `{"data":[]}`, rr.Body.String(), target)
+	}
+
+	assert.Zero(t, xoxnoCalls.Load(), "no request reaches an XOXNO or Stellar Expert host")
+}
+
+func TestSwapHandlerTimeoutsFitTheServerWriteTimeout(t *testing.T) {
+	t.Parallel()
+
+	assert.Less(t, handlers.SwapContextTimeout, DefaultWriteTimeout)
 }

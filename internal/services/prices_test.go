@@ -38,6 +38,8 @@ func hourlyCandlesAged(now time.Time, oldestAge time.Duration, opens ...float64)
 // fakeStellarExpert is a programmable stub for the StellarExpertService
 // interface. Tests configure assets via Set and inspect call counts via Calls.
 type fakeStellarExpert struct {
+	types.StellarExpertService
+
 	mu              sync.Mutex
 	assets          map[string]*types.StellarExpertAsset
 	candles         map[string][]types.StellarExpertCandle

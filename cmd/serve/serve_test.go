@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/stellar/freighter-backend-v2/internal/api/handlers"
 	"github.com/stellar/freighter-backend-v2/internal/config"
 	"github.com/stellar/freighter-backend-v2/internal/services"
 )
@@ -339,5 +341,115 @@ func TestServeCmd_AcceptsAuthClockSkewLeewayBoundaries(t *testing.T) {
 		cmd.SetArgs([]string{"--auth-clock-skew-leeway", leeway, "--database-url", "postgres://localhost/test"})
 
 		require.NoErrorf(t, cmd.Execute(), "leeway %s should be accepted", leeway)
+	}
+}
+
+// runServe executes the serve command's flag parsing and boot validation only.
+// The database is disabled unless args say otherwise, so DATABASE_URL cannot
+// fail boot for an unrelated reason.
+func runServe(args ...string) (*ServeCmd, error) {
+	serveCmd := &ServeCmd{Cfg: &config.Config{}}
+	cmd := serveCmd.Command()
+	cmd.RunE = func(*cobra.Command, []string) error { return nil }
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs(append([]string{"--db-enabled=false"}, args...))
+	return serveCmd, cmd.Execute()
+}
+
+func TestServeCmd_RejectsNonPositiveSwapTokenCacheTTL(t *testing.T) {
+	t.Parallel()
+
+	_, err := runServe("--swap-token-cache-ttl=0")
+	assert.EqualError(t, err, "--swap-token-cache-ttl=0s must be positive")
+}
+
+func TestServeCmd_SwapSourceTimeout(t *testing.T) {
+	t.Parallel()
+
+	limit := handlers.SwapContextTimeout
+	cases := []struct {
+		name    string
+		timeout time.Duration
+		wantErr string
+	}{
+		{"zero", 0, "--swap-source-timeout=0s must be positive and below 9s"},
+		{"negative", -time.Second, "--swap-source-timeout=-1s must be positive and below 9s"},
+		{"at the handler timeout", limit, "--swap-source-timeout=9s must be positive and below 9s"},
+		{"above the handler timeout", limit + time.Second, "--swap-source-timeout=10s must be positive and below 9s"},
+		{"just below the handler timeout", limit - time.Millisecond, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			serveCmd, err := runServe("--swap-source-timeout=" + tc.timeout.String())
+			if tc.wantErr != "" {
+				assert.EqualError(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.timeout, serveCmd.Cfg.SwapConfig.SourceTimeout)
+		})
+	}
+}
+
+func TestServeCmd_SwapXoxnoConfigFromEnv(t *testing.T) {
+	// No t.Parallel(): t.Setenv is incompatible with parallel tests.
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("SWAP_XOXNO_ENABLED", "true")
+	t.Setenv("SWAP_XOXNO_PUBNET_TOKEN_LIST_URL", "https://tokens.example/list")
+	t.Setenv("SWAP_XOXNO_TESTNET_TOKEN_LIST_URL", "https://testnet-tokens.example/list")
+
+	serveCmd, err := runServe()
+	require.NoError(t, err)
+	assert.True(t, serveCmd.Cfg.SwapConfig.XoxnoEnabled)
+	assert.Equal(t, "https://tokens.example/list", serveCmd.Cfg.SwapConfig.XoxnoPubnetTokenListURL)
+	assert.Equal(t, "https://testnet-tokens.example/list", serveCmd.Cfg.SwapConfig.XoxnoTestnetTokenListURL)
+}
+
+func TestServeCmd_AcceptsTheXoxnoSwapConfig(t *testing.T) {
+	t.Parallel()
+
+	for name, args := range map[string][]string{
+		"the default":                       {},
+		"the default URLs and routers on":   {"--swap-xoxno-enabled=true"},
+		"an empty network left out when on": {"--swap-xoxno-enabled=true", "--swap-xoxno-testnet-quote-url=", "--swap-xoxno-testnet-router=", "--swap-xoxno-testnet-token-list-url="},
+	} {
+		_, err := runServe(args...)
+		require.NoError(t, err, name)
+	}
+}
+
+func TestServeCmd_RejectsMalformedXoxnoSwapConfig(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		flag, value, wantErr string
+	}{
+		{"swap-xoxno-pubnet-quote-url", "not-a-url", "--swap-xoxno-pubnet-quote-url=not-a-url must be an http(s) URL"},
+		{"swap-xoxno-testnet-quote-url", "ftp://quote.example", "--swap-xoxno-testnet-quote-url=ftp://quote.example must be an http(s) URL"},
+		{"swap-xoxno-pubnet-token-list-url", "https://", "--swap-xoxno-pubnet-token-list-url=https:// must be an http(s) URL"},
+		{"swap-xoxno-testnet-token-list-url", "//tokens.example", "--swap-xoxno-testnet-token-list-url=//tokens.example must be an http(s) URL"},
+		{"swap-xoxno-pubnet-router", "CBAD", "--swap-xoxno-pubnet-router=CBAD must be a Soroban contract id"},
+		{"swap-xoxno-testnet-router", "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H", "--swap-xoxno-testnet-router=GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H must be a Soroban contract id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.flag, func(t *testing.T) {
+			t.Parallel()
+			_, err := runServe("--swap-xoxno-enabled=true", "--"+tc.flag+"="+tc.value)
+			assert.EqualError(t, err, tc.wantErr)
+		})
+	}
+}
+
+func TestServeCmd_IgnoresMalformedXoxnoSwapConfigWhenDisabled(t *testing.T) {
+	t.Parallel()
+
+	for _, args := range [][]string{
+		{"--swap-xoxno-enabled=false"},
+		{}, // off by default
+	} {
+		_, err := runServe(append(args, "--swap-xoxno-pubnet-router=CBAD", "--swap-xoxno-pubnet-quote-url=not-a-url")...)
+		require.NoError(t, err)
 	}
 }
