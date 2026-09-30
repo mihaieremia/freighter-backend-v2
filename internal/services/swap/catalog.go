@@ -10,6 +10,7 @@ import (
 
 	"github.com/stellar/freighter-backend-v2/internal/logger"
 	"github.com/stellar/freighter-backend-v2/internal/types"
+	xoxno "github.com/xoxno/sdk-go"
 )
 
 const (
@@ -25,10 +26,7 @@ var errCatalogPricesUnavailable = errors.New("aggregator prices unavailable")
 
 // aggregatorPrice is an entry of the aggregator's /api/v1/prices, keyed by
 // contract id.
-type aggregatorPrice struct {
-	USD      float64 `json:"usd"`
-	DepthUSD float64 `json:"depth_usd"`
-}
+type aggregatorPrice = xoxno.Price
 
 // GetTokenCatalog returns every registered token except LP tokens and entries
 // without metadata. It is cached like GetSwapTokens: if a refresh fails or
@@ -114,7 +112,7 @@ func (s *tokensService) fetchCatalog(ctx context.Context, network string, cfg Ne
 	var pricesErr error
 	var g errgroup.Group
 	g.Go(func() error {
-		pricesErr = s.get(ctx, network, "GetAggregatorPrices", "aggregator prices", cfg.QuoteURL+"/api/v1/prices", &prices)
+		pricesErr = s.fetchXoxno(ctx, network, "GetAggregatorPrices", func(c *xoxno.Client) (err error) { prices, err = c.Prices(ctx); return })
 		return nil
 	})
 	listed, routable, err := s.fetchLists(ctx, network, cfg)

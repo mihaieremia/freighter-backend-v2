@@ -75,6 +75,9 @@ type StellarExpertService interface {
 	// GetContractAsset returns the classic asset a Stellar Asset Contract wraps
 	// ("XLM" or "CODE-ISSUER-N"), or "" for a contract of any other kind.
 	GetContractAsset(ctx context.Context, network, contractID string) (string, error)
+	// GetTransactionMeta returns the confirmed transaction meta XDR, or empty
+	// when the explorer has not indexed it. One request, without retries.
+	GetTransactionMeta(ctx context.Context, network, transactionHash string) (string, error)
 }
 
 // PriceEntry is the per-token shape returned to the client. Numeric fields

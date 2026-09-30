@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stellar/freighter-backend-v2/internal/metrics"
@@ -52,8 +53,8 @@ type stellarExpertService struct {
 	svcMetrics     *metrics.Service
 }
 
-// NewStellarExpertService constructs a thin HTTP client for the Stellar
-// Expert /asset endpoint. The base URLs should already include the network
+// NewStellarExpertService constructs a thin HTTP client for Stellar
+// Expert. The base URLs should already include the network
 // segment (e.g. https://api.stellar.expert/explorer/public). apiKey, when
 // non-empty, is sent as `Authorization: Bearer <apiKey>` on every request.
 // origin is sent as the Origin header; if empty, defaultStellarExpertOrigin
@@ -164,37 +165,72 @@ func (s *stellarExpertService) GetContractAsset(ctx context.Context, network, co
 	return contract.Asset, nil
 }
 
+func (s *stellarExpertService) GetTransactionMeta(ctx context.Context, network, transactionHash string) (_ string, err error) {
+	start := time.Now()
+	defer func() {
+		metrics.Record(s.svcMetrics, stellarExpertServiceName, "GetTransactionMeta", network, time.Since(start).Seconds(), err)
+	}()
+	baseURL, err := s.baseURLForNetwork(network)
+	if err != nil {
+		return "", err
+	}
+	var receipt struct {
+		Meta string `json:"meta"`
+	}
+	if err := s.doJSON(ctx, strings.TrimRight(baseURL, "/")+"/tx/"+url.PathEscape(transactionHash), "receipt", &receipt); err != nil {
+		return "", err
+	}
+	return receipt.Meta, nil
+}
+
 // doJSON issues a GET to reqURL and decodes a 200 response body into dest. It
 // maps 404 → ErrAssetNotFound and 400 → ErrAssetMalformed so callers treat
 // unknown/invalid assets as unpriceable without retry, and any other non-200
 // to an UpstreamError. label ("asset"/"candles") disambiguates the endpoint in
-// decode/status error messages.
+// decode/status error messages. Receipts use bounded reads, reject redirects,
+// and treat 404 as missing transaction meta, never as an unknown asset.
 func (s *stellarExpertService) doJSON(ctx context.Context, reqURL, label string, dest any) error {
 	req, err := s.newRequest(ctx, reqURL)
 	if err != nil {
 		return err
 	}
 
-	resp, err := s.httpClient.Do(req)
+	client := s.httpClient
+	if label == "receipt" {
+		bounded := *client
+		bounded.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &bounded
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return &metrics.UpstreamError{Kind: "http_error", Err: err}
 	}
 	defer resp.Body.Close() //nolint:errcheck
+	var body io.Reader = resp.Body
+	if label == "receipt" {
+		body = io.LimitReader(resp.Body, 1<<20)
+	}
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
+		if err := json.NewDecoder(body).Decode(dest); err != nil {
 			return fmt.Errorf("decoding stellar expert %s response: %w", label, err)
 		}
 		return nil
 	case http.StatusNotFound:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, body)
+		if label == "receipt" {
+			return nil
+		}
 		return ErrAssetNotFound
 	case http.StatusBadRequest:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, body)
+		if label == "receipt" {
+			return &metrics.UpstreamError{Kind: "http_error", Code: resp.StatusCode, Err: fmt.Errorf("stellar expert receipt status %d", resp.StatusCode)}
+		}
 		return ErrAssetMalformed
 	default:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, body)
 		return &metrics.UpstreamError{Kind: "http_error", Code: resp.StatusCode, Err: fmt.Errorf("stellar expert %s status %d", label, resp.StatusCode)}
 	}
 }

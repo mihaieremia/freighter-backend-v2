@@ -1,6 +1,10 @@
 package types
 
-import "errors"
+import (
+	"errors"
+
+	xoxno "github.com/xoxno/sdk-go"
+)
 
 // ClassicDecimals is the fixed precision of every classic asset and its Stellar
 // Asset Contract.
@@ -47,12 +51,7 @@ type SwapRouteHop struct {
 }
 
 // SwapTransaction is an unsigned, source-built transaction the client signs as is.
-type SwapTransaction struct {
-	EnvelopeXDR       string `json:"envelopeXdr"`
-	RouterContract    string `json:"routerContract"`
-	NetworkPassphrase string `json:"networkPassphrase"`
-	Simulated         bool   `json:"simulated"`
-}
+type SwapTransaction = xoxno.Transaction
 
 // SwapQuoteAlternative reports what a source offered, or why it did not.
 type SwapQuoteAlternative struct {

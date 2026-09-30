@@ -153,7 +153,7 @@ func (s *lifiSource) Quote(ctx context.Context, req types.SwapQuoteRequest) (_ *
 		q.Estimate.Tool != "soroswap" || !q.Estimate.SkipApproval || q.Estimate.ApprovalAddress != lifiRouter {
 		return nil, invalidQuote("LI.FI quote does not match the same-chain request")
 	}
-	out, minimum, err := checkSlippage(&xoxnoQuoteResponse{AmountOut: q.Estimate.ToAmount, AmountOutMin: q.Estimate.ToAmountMin}, req.SlippagePercent)
+	out, minimum, err := checkSlippage(q.Estimate.ToAmount, q.Estimate.ToAmountMin, req.SlippagePercent)
 	if err != nil {
 		return nil, err
 	}
@@ -163,8 +163,13 @@ func (s *lifiSource) Quote(ctx context.Context, req types.SwapQuoteRequest) (_ *
 	if err != nil {
 		return nil, invalidQuote("LI.FI envelope: %v", err)
 	}
+	env, err := decodeEnvelope(q.TransactionRequest.Data)
+	if err != nil {
+		return nil, err
+	}
+	tx := env.V1.Tx
 	return &candidate{Source: types.SwapSourceLifi, DestAmount: out, DestAmountMin: minimum, DestDecimals: req.DestDecimals,
-		Transaction: &types.SwapTransaction{EnvelopeXDR: q.TransactionRequest.Data, RouterContract: lifiRouter, NetworkPassphrase: passphrase, Simulated: true},
+		Transaction: &types.SwapTransaction{EnvelopeXDR: q.TransactionRequest.Data, RouterContract: lifiRouter, NetworkPassphrase: passphrase, Simulated: true, FeeStroops: strconv.FormatUint(uint64(tx.Fee), 10), ResourceFeeStroops: strconv.FormatInt(int64(tx.Ext.SorobanData.ResourceFee), 10), ExpiresAt: int64(tx.Cond.TimeBounds.MaxTime)},
 		NetworkFee:  big.NewInt(int64(fee)),
 	}, nil
 }

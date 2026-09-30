@@ -554,10 +554,19 @@ func TestApiServer_SwapWithTheXoxnoSourceOffAsksOnlyHorizon(t *testing.T) {
 	}
 
 	assert.Zero(t, xoxnoCalls.Load(), "no request reaches an XOXNO or Stellar Expert host")
+
+	rr = httptest.NewRecorder()
+	hash := strings.Repeat("ab", 32)
+	viewer := "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/v1/swap/receipt/"+hash+"?network=PUBLIC&viewer="+viewer+"&operationIndex=0", nil))
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.JSONEq(t, `{"data":{"network":"PUBLIC","transactionHash":"`+hash+`","viewer":"`+viewer+`","operationIndex":0,"status":"unavailable"}}`, rr.Body.String())
+	assert.Zero(t, xoxnoCalls.Load())
 }
 
 func TestSwapHandlerTimeoutsFitTheServerWriteTimeout(t *testing.T) {
 	t.Parallel()
 
 	assert.Less(t, handlers.SwapContextTimeout, DefaultWriteTimeout)
+	assert.Less(t, handlers.SwapReceiptContextTimeout, DefaultWriteTimeout)
 }

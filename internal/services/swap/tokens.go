@@ -15,6 +15,7 @@ import (
 	"github.com/stellar/freighter-backend-v2/internal/types"
 	"github.com/stellar/freighter-backend-v2/internal/utils"
 	"github.com/stellar/freighter-backend-v2/internal/utils/assetid"
+	xoxno "github.com/xoxno/sdk-go"
 )
 
 const (
@@ -90,21 +91,9 @@ func NewTokensService(networks map[string]Network, contracts types.StellarExpert
 func (s *tokensService) Name() string { return tokensServiceName }
 
 // listedToken is the part of an entry of XOXNO's Stellar token list used here.
-type listedToken struct {
-	Identifier string  `json:"identifier"`
-	Ticker     string  `json:"ticker"`
-	Name       string  `json:"name"`
-	Decimals   int     `json:"decimals"`
-	PNGURL     string  `json:"pngUrl"`
-	USDPrice   float64 `json:"usdPrice"`
-	SwapListed bool    `json:"swapListed"`
-	LPToken    bool    `json:"lpToken"`
-}
+type listedToken = xoxno.ListedToken
 
-type aggregatorToken struct {
-	ID       string `json:"id"`
-	Decimals int    `json:"decimals"`
-}
+type aggregatorToken = xoxno.Token
 
 // GetSwapTokens returns the listed, routable tokens. The list is cached for the
 // TTL. If a refresh fails or outlasts the caller, the last list keeps being
@@ -250,10 +239,10 @@ func (s *tokensService) fetchLists(ctx context.Context, network string, cfg Netw
 	var routable []aggregatorToken
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return s.get(gctx, network, "GetTokenList", "swap token list", cfg.TokenListURL, &listed)
+		return s.fetchXoxno(gctx, network, "GetTokenList", func(c *xoxno.Client) (err error) { listed, err = c.ListedTokens(gctx); return })
 	})
 	g.Go(func() error {
-		return s.get(gctx, network, "GetAggregatorTokens", "aggregator tokens", cfg.QuoteURL+"/api/v1/tokens", &routable)
+		return s.fetchXoxno(gctx, network, "GetAggregatorTokens", func(c *xoxno.Client) (err error) { routable, err = c.Tokens(gctx); return })
 	})
 	if err := g.Wait(); err != nil {
 		return nil, nil, err
@@ -335,17 +324,8 @@ func (s *tokensService) classify(ctx context.Context, network, contractID string
 	return nil
 }
 
-// get fetches one upstream list. method labels the call in metrics; what
-// names it in errors.
-func (s *tokensService) get(ctx context.Context, network, method, what, reqURL string, dest any) (err error) {
+func (s *tokensService) fetchXoxno(ctx context.Context, network, method string, call func(*xoxno.Client) error) (err error) {
 	defer recordCall(s.svcMetrics, tokensServiceName, method, network, time.Now(), &err)
-
-	status, err := getJSON(ctx, s.httpClient, reqURL, dest)
-	if err != nil {
-		return err
-	}
-	if status != http.StatusOK {
-		return statusError(what, status)
-	}
-	return nil
+	cfg := s.networks[network]
+	return xoxnoError(call(xoxno.NewClient(xoxno.Config{QuoteURL: cfg.QuoteURL, TokenListURL: cfg.TokenListURL, HTTPClient: s.httpClient})))
 }
