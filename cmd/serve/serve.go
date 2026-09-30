@@ -3,6 +3,7 @@ package serve
 import (
 	"fmt"
 	"math"
+	"net/url"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,6 +13,7 @@ import (
 	"github.com/stellar/freighter-backend-v2/internal/auth"
 	"github.com/stellar/freighter-backend-v2/internal/config"
 	"github.com/stellar/freighter-backend-v2/internal/services"
+
 	"github.com/stellar/freighter-backend-v2/internal/utils"
 )
 
@@ -50,6 +52,14 @@ func (s *ServeCmd) Command() *cobra.Command {
 			// operator who passes 0 or a negative flag would expect.
 			if n := s.Cfg.AppConfig.WalletBackendBalanceConcurrency; n <= 0 {
 				return fmt.Errorf("--wallet-backend-balance-concurrency=%d must be positive", n)
+			}
+			if d := s.Cfg.SwapConfig.SourceTimeout; d <= 0 || d >= handlers.SwapContextTimeout {
+				return fmt.Errorf("--swap-source-timeout=%s must be positive and below %s", d, handlers.SwapContextTimeout)
+			}
+			if s.Cfg.SwapConfig.XoxnoEnabled {
+				if err := validateXoxnoSwapConfig(s.Cfg.SwapConfig); err != nil {
+					return err
+				}
 			}
 			if n := s.Cfg.PricesConfig.MaxTokensPerRequest; n <= 0 {
 				return fmt.Errorf("--max-tokens-per-request=%d must be positive", n)
@@ -173,6 +183,14 @@ func (s *ServeCmd) Command() *cobra.Command {
 	cmd.Flags().StringVar(&s.Cfg.HorizonConfig.HorizonPubnetURL, "horizon-pubnet-url", "https://horizon.stellar.org/", "The URL of the pubnet Horizon")
 	cmd.Flags().StringVar(&s.Cfg.HorizonConfig.HorizonTestnetURL, "horizon-testnet-url", "https://horizon-testnet.stellar.org", "The URL of the testnet Horizon")
 
+	// Swap Config
+	cmd.Flags().BoolVar(&s.Cfg.SwapConfig.XoxnoEnabled, "swap-xoxno-enabled", false, "Opt in to the XOXNO aggregator, which receives the sender address with each quote (env SWAP_XOXNO_ENABLED); independent of the LI.FI source.")
+	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoPubnetQuoteURL, "swap-xoxno-pubnet-quote-url", "https://stellar-swap.xoxno.com", "Base URL of the XOXNO aggregator quote server on pubnet")
+	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoPubnetRouter, "swap-xoxno-pubnet-router", "CCVENFSVCBYDHVOACFZXMNNYVOZ3LKXPZYU5LUI4N7KTXOKRVYD7F3TR", "The only router contract a pubnet aggregator swap transaction may invoke")
+	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoTestnetQuoteURL, "swap-xoxno-testnet-quote-url", "https://testnet-stellar-swap.xoxno.com", "Base URL of the XOXNO aggregator quote server on testnet")
+	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoTestnetRouter, "swap-xoxno-testnet-router", "CDNTWMWW2WGYTKIZTJYNGNVQQZI4KTC5BQRZ3275KESRX5T4O3AYECL5", "The only router contract a testnet aggregator swap transaction may invoke")
+	cmd.Flags().DurationVar(&s.Cfg.SwapConfig.SourceTimeout, "swap-source-timeout", 6*time.Second, "Time each swap quote source gets before it is dropped from the comparison")
+
 	// Redis Config
 	cmd.Flags().StringVar(&s.Cfg.RedisConfig.ConnectionName, "redis-connection-name", "freighter-redis", "The name of the Redis connection")
 	cmd.Flags().StringVar(&s.Cfg.RedisConfig.Host, "redis-host", "localhost", "The Redis host")
@@ -234,6 +252,30 @@ func (s *ServeCmd) Command() *cobra.Command {
 	cmd.Flags().IntVar(&s.Cfg.PriceHistoryConfig.TokenStatsCacheTTLSeconds, "token-stats-cache-ttl-seconds", 3600, "Redis TTL for the cached token-stats asset payload (seconds), shared with the history service's volume verdict")
 
 	return cmd
+}
+
+func isHTTPURL(v string) bool {
+	u, err := url.Parse(v)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// validateXoxnoSwapConfig rejects a malformed aggregator URL or router. An empty
+// value is allowed: it leaves that network without the aggregator.
+func validateXoxnoSwapConfig(c config.SwapConfig) error {
+	for _, f := range []struct {
+		flag, value, noun string
+		valid             func(string) bool
+	}{
+		{"swap-xoxno-pubnet-quote-url", c.XoxnoPubnetQuoteURL, "an http(s) URL", isHTTPURL},
+		{"swap-xoxno-testnet-quote-url", c.XoxnoTestnetQuoteURL, "an http(s) URL", isHTTPURL},
+		{"swap-xoxno-pubnet-router", c.XoxnoPubnetRouter, "a Soroban contract id", utils.IsValidContractID},
+		{"swap-xoxno-testnet-router", c.XoxnoTestnetRouter, "a Soroban contract id", utils.IsValidContractID},
+	} {
+		if f.value != "" && !f.valid(f.value) {
+			return fmt.Errorf("--%s=%v must be %s", f.flag, f.value, f.noun)
+		}
+	}
+	return nil
 }
 
 func (s *ServeCmd) Run() error {
