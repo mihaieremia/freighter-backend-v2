@@ -3,6 +3,7 @@ package swap
 import (
 	"context"
 	"errors"
+	xoxno "github.com/xoxno/sdk-go"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/stellar/freighter-backend-v2/internal/metrics"
 	"github.com/stellar/freighter-backend-v2/internal/types"
-	"github.com/stellar/freighter-backend-v2/internal/utils"
 )
 
 const lifiChainID int64 = 1201081091099710
@@ -100,7 +100,7 @@ func (s *lifiSource) Quote(ctx context.Context, req types.SwapQuoteRequest) (_ *
 	if err != nil {
 		return nil, err
 	}
-	input, err := utils.ParseDecimalAmount(req.SourceAmount, req.SourceDecimals)
+	input, err := xoxno.ParseDecimalAmount(req.SourceAmount, req.SourceDecimals)
 	if err != nil {
 		return nil, err
 	}
@@ -157,19 +157,14 @@ func (s *lifiSource) Quote(ctx context.Context, req types.SwapQuoteRequest) (_ *
 	if err != nil {
 		return nil, err
 	}
-	fee, err := verifyLifiEnvelope(q.TransactionRequest.Data, envelopeExpectation{
+	tx, err := verifyLifiEnvelope(q.TransactionRequest.Data, envelopeExpectation{
 		Sender: req.Sender, Router: lifiRouter, SrcToken: srcID, SrcAtoms: input, DstToken: dstID, MinOut: minimum,
 	}, acct.Sequence+1, s.now().Unix())
 	if err != nil {
 		return nil, invalidQuote("LI.FI envelope: %v", err)
 	}
-	env, err := decodeEnvelope(q.TransactionRequest.Data)
-	if err != nil {
-		return nil, err
-	}
-	tx := env.V1.Tx
 	return &candidate{Source: types.SwapSourceLifi, DestAmount: out, DestAmountMin: minimum, DestDecimals: req.DestDecimals,
 		Transaction: &types.SwapTransaction{EnvelopeXDR: q.TransactionRequest.Data, RouterContract: lifiRouter, NetworkPassphrase: passphrase, Simulated: true, FeeStroops: strconv.FormatUint(uint64(tx.Fee), 10), ResourceFeeStroops: strconv.FormatInt(int64(tx.Ext.SorobanData.ResourceFee), 10), ExpiresAt: int64(tx.Cond.TimeBounds.MaxTime)},
-		NetworkFee:  big.NewInt(int64(fee)),
+		NetworkFee:  big.NewInt(int64(tx.Fee)),
 	}, nil
 }

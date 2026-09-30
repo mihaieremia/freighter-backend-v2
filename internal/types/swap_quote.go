@@ -42,13 +42,7 @@ type SwapQuoteRequest struct {
 }
 
 // SwapRouteHop is one pool crossing in an aggregated route.
-type SwapRouteHop struct {
-	Venue string `json:"venue"`
-	Kind  string `json:"kind"`
-	Pool  string `json:"pool"`
-	From  string `json:"from"`
-	To    string `json:"to"`
-}
+type SwapRouteHop = xoxno.RouteHop
 
 // SwapTransaction is an unsigned, source-built transaction the client signs as is.
 type SwapTransaction = xoxno.Transaction

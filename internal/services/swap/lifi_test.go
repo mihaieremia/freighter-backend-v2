@@ -36,7 +36,7 @@ func TestLifiEnvelope(t *testing.T) {
 	q, want, sequence, now := lifiFixture(t)
 	fee, err := verifyLifiEnvelope(q.TransactionRequest.Data, want, sequence, now)
 	require.NoError(t, err)
-	assert.Positive(t, fee)
+	assert.Positive(t, fee.Fee)
 	for name, mutate := range map[string]func(*xdr.Transaction){
 		"wrong source":   func(tx *xdr.Transaction) { tx.SourceAccount.Ed25519[0] ^= 1 },
 		"stale sequence": func(tx *xdr.Transaction) { tx.SeqNum++ },

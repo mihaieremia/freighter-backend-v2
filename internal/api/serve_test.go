@@ -504,7 +504,11 @@ func TestApiServer_SwapWithTheXoxnoSourceOffAsksOnlyHorizon(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(xoxno.Close)
-	horizon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	horizon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/transactions/") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		horizonCalls.Add(1)
 		_, _ = w.Write([]byte(`{"_embedded":{"records":[{"destination_amount":"12.3456789","path":[]}]}}`))
 	}))

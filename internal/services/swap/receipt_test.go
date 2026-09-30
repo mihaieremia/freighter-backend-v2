@@ -207,3 +207,130 @@ func TestSwapReceipt_UnavailableAndUntrustedResponses(t *testing.T) {
 		})
 	}
 }
+
+func TestLifiReceiptBinding(t *testing.T) {
+	for _, version := range []int32{3, 4} {
+		for _, variant := range []string{"valid", "wrong recipient", "wrong token", "self", "mismatch event hash", "wrong wrapper viewer", "wrong nested viewer", "wrong interface", "wrong router", "failed"} {
+			t.Run(string(rune('0'+version))+"/"+variant, func(t *testing.T) {
+				q, want, _, _ := lifiFixture(t)
+				env, err := decodeEnvelope(q.TransactionRequest.Data)
+				require.NoError(t, err)
+				call := env.V1.Tx.Operations[0].Body.InvokeHostFunctionOp.HostFunction.InvokeContract
+				switch variant {
+				case "wrong wrapper viewer":
+					call.Args[1] = addrVal(mustAddr(utils.ScAddressFromAccountString(testIssuer)))
+				case "wrong nested viewer":
+					fields, e := strictScMap(call.Args[0], "args", "fees", "interface", "min_amount_out", "token_in", "token_out", "tracking_id")
+					require.NoError(t, e)
+					args, e := scVec(fields["args"])
+					require.NoError(t, e)
+					args[5] = addrVal(mustAddr(utils.ScAddressFromAccountString(testIssuer)))
+				case "wrong interface":
+					s := xdr.ScSymbol("other")
+					setStructField(&call.Args[0], "interface", xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &s})
+				case "wrong router":
+					call.ContractAddress = mustAddrContract(testContract(7))
+				}
+				sym := xdr.ScSymbol("transfer")
+				event := xdr.ContractEvent{Type: xdr.ContractEventTypeContract, ContractId: mustAddrContract(want.DstToken).ContractId, Body: xdr.ContractEventBody{V: 0, V0: &xdr.ContractEventV0{Topics: []xdr.ScVal{{Type: xdr.ScValTypeScvSymbol, Sym: &sym}, addrVal(mustAddrContract(lifiAquarius)), addrVal(mustAddr(utils.ScAddressFromAccountString(want.Sender)))}, Data: i128Val(777)}}}
+				switch variant {
+				case "wrong recipient":
+					event.Body.V0.Topics[2] = addrVal(mustAddr(utils.ScAddressFromAccountString(testIssuer)))
+				case "self":
+					event.Body.V0.Topics[1] = event.Body.V0.Topics[2]
+				case "wrong token":
+					event.ContractId = mustAddrContract(testContract(7)).ContractId
+				}
+				events := []xdr.ContractEvent{event}
+				value := i128Val(777)
+				pre, e := (xdr.InvokeHostFunctionSuccessPreImage{ReturnValue: value, Events: events}).MarshalBinary()
+				require.NoError(t, e)
+				h := xdr.Hash(sha256.Sum256(pre))
+				ops := []xdr.OperationResult{{Code: xdr.OperationResultCodeOpInner, Tr: &xdr.OperationResultTr{Type: xdr.OperationTypeInvokeHostFunction, InvokeHostFunctionResult: &xdr.InvokeHostFunctionResult{Code: xdr.InvokeHostFunctionResultCodeInvokeHostFunctionSuccess, Success: &h}}}}
+				result := xdr.TransactionResult{Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxSuccess, Results: &ops}}
+				if variant == "failed" {
+					result.Result.Code = xdr.TransactionResultCodeTxFailed
+				}
+				if variant == "mismatch event hash" {
+					events[0].Body.V0.Data = i128Val(999)
+				}
+				meta := xdr.TransactionMeta{V: 3, V3: &xdr.TransactionMetaV3{Operations: []xdr.OperationMeta{{}}, SorobanMeta: &xdr.SorobanTransactionMeta{Events: events, ReturnValue: value}}}
+				if version == 4 {
+					meta = xdr.TransactionMeta{V: 4, V4: &xdr.TransactionMetaV4{Operations: []xdr.OperationMetaV2{{Events: events}}, SorobanMeta: &xdr.SorobanTransactionMetaV2{ReturnValue: &value}}}
+				}
+				en, e := xdr.MarshalBase64(env)
+				require.NoError(t, e)
+				re, e := xdr.MarshalBase64(result)
+				require.NoError(t, e)
+				me, e := xdr.MarshalBase64(meta)
+				require.NoError(t, e)
+				got, e := readLifiReceipt(en, re, me, want.Sender, 0)
+				require.NoError(t, e)
+				if variant == "valid" {
+					require.NotNil(t, got)
+					require.Equal(t, "777", got.AmountOut.String())
+					require.Equal(t, want.DstToken, got.TokenOut)
+				} else {
+					require.Nil(t, got)
+				}
+			})
+		}
+	}
+}
+
+func TestLifiReceiptTransportWithoutXoxno(t *testing.T) {
+	q, want, _, _ := lifiFixture(t)
+	for _, feeBump := range []bool{false, true} {
+		t.Run(map[bool]string{false: "signed", true: "fee-bump"}[feeBump], func(t *testing.T) {
+			_, _, _, meta := receiptFixture(t, types.PUBLIC, false)
+			env, err := decodeEnvelope(q.TransactionRequest.Data)
+			require.NoError(t, err)
+			// A different invocation before the selected swap must not supply its output.
+			env.V1.Tx.Operations = append([]xdr.Operation{env.V1.Tx.Operations[0]}, env.V1.Tx.Operations...)
+			env.V1.Tx.Operations[0].Body.InvokeHostFunctionOp = &xdr.InvokeHostFunctionOp{HostFunction: xdr.HostFunction{Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract, InvokeContract: &xdr.InvokeContractArgs{ContractAddress: mustAddrContract(testContract(7)), FunctionName: "other"}}}
+			if feeBump {
+				env = xdr.TransactionEnvelope{Type: xdr.EnvelopeTypeEnvelopeTypeTxFeeBump, FeeBump: &xdr.FeeBumpTransactionEnvelope{Tx: xdr.FeeBumpTransaction{FeeSource: env.V1.Tx.SourceAccount, Fee: 10000, InnerTx: xdr.FeeBumpTransactionInnerTx{Type: xdr.EnvelopeTypeEnvelopeTypeTx, V1: env.V1}}}}
+			}
+			envelope, err := xdr.MarshalBase64(env)
+			require.NoError(t, err)
+			h, err := stellarNetwork.HashTransactionInEnvelope(env, stellarNetwork.PublicNetworkPassphrase)
+			require.NoError(t, err)
+			hash := hex.EncodeToString(h[:])
+			var decoded xdr.TransactionMeta
+			require.NoError(t, xdr.SafeUnmarshalBase64(meta, &decoded))
+			ops := make([]xdr.OperationResult, 2)
+			for i := range decoded.V4.Operations {
+				event := &decoded.V4.Operations[i].Events[0]
+				event.ContractId = mustAddrContract(want.DstToken).ContractId
+				event.Body.V0.Topics[1] = addrVal(mustAddrContract(lifiAquarius))
+				event.Body.V0.Topics[2] = addrVal(mustAddr(utils.ScAddressFromAccountString(want.Sender)))
+				preimage, err := (xdr.InvokeHostFunctionSuccessPreImage{ReturnValue: *decoded.V4.SorobanMeta.ReturnValue, Events: decoded.V4.Operations[i].Events}).MarshalBinary()
+				require.NoError(t, err)
+				success := xdr.Hash(sha256.Sum256(preimage))
+				ops[i] = xdr.OperationResult{Code: xdr.OperationResultCodeOpInner, Tr: &xdr.OperationResultTr{Type: xdr.OperationTypeInvokeHostFunction, InvokeHostFunctionResult: &xdr.InvokeHostFunctionResult{Code: xdr.InvokeHostFunctionResultCodeInvokeHostFunctionSuccess, Success: &success}}}
+			}
+			res := xdr.TransactionResult{Result: xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxSuccess, Results: &ops}}
+			if feeBump {
+				res.Result = xdr.TransactionResultResult{Code: xdr.TransactionResultCodeTxFeeBumpInnerSuccess, InnerResultPair: &xdr.InnerTransactionResultPair{Result: xdr.InnerTransactionResult{Result: xdr.InnerTransactionResultResult{Code: xdr.TransactionResultCodeTxSuccess, Results: &ops}}}}
+			}
+			result, err := xdr.MarshalBase64(res)
+			require.NoError(t, err)
+			meta, err = xdr.MarshalBase64(decoded)
+			require.NoError(t, err)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasPrefix(r.URL.Path, "/transactions/") {
+					_ = json.NewEncoder(w).Encode(map[string]any{"successful": true, "envelope_xdr": envelope, "result_xdr": result})
+				} else {
+					_ = json.NewEncoder(w).Encode(map[string]string{"meta": meta})
+				}
+			}))
+			defer srv.Close()
+			svc := NewReceiptService(Config{HorizonPubnetURL: srv.URL}, services.NewStellarExpertService(srv.URL, "", "", "", nil), nil)
+			got, err := svc.GetSwapReceipt(context.Background(), types.PUBLIC, hash, want.Sender, 1)
+			require.NoError(t, err)
+			assert.Equal(t, "confirmed", got.Status)
+			assert.Equal(t, want.DstToken, got.TokenOut)
+			assert.Equal(t, "1234", got.ReceivedAtoms)
+		})
+	}
+}

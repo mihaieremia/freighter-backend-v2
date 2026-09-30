@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	xoxno "github.com/xoxno/sdk-go"
 	"net/http"
 	"time"
 
@@ -140,7 +141,7 @@ func validateSwapAmount(body swapQuoteBody, srcAsset, dstAsset string) (srcDecim
 	if body.DestAmount != "" {
 		field, amount, decimals = "destAmount", body.DestAmount, dstDecimals
 	}
-	if _, err := utils.ParseDecimalAmount(amount, decimals); err != nil {
+	if _, err := xoxno.ParseDecimalAmount(amount, decimals); err != nil {
 		return 0, 0, httperror.BadRequest(fmt.Sprintf("invalid %s: %s", field, err), err)
 	}
 	return srcDecimals, dstDecimals, nil
@@ -171,8 +172,8 @@ func swapDecimals(requested *int, asset, field string) (int, error) {
 	if requested == nil {
 		return 0, fmt.Errorf("%s is required for a Soroban token", field)
 	}
-	if *requested < 0 || *requested > utils.MaxAmountDecimals {
-		return 0, fmt.Errorf("%s must be between 0 and %d", field, utils.MaxAmountDecimals)
+	if *requested < 0 || *requested > xoxno.MaxAmountDecimals {
+		return 0, fmt.Errorf("%s must be between 0 and %d", field, xoxno.MaxAmountDecimals)
 	}
 	return *requested, nil
 }

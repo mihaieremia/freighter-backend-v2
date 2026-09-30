@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	xoxno "github.com/xoxno/sdk-go"
 	"io"
 	"math/big"
 	"net/http"
@@ -16,7 +17,6 @@ import (
 
 	"github.com/stellar/freighter-backend-v2/internal/metrics"
 	"github.com/stellar/freighter-backend-v2/internal/types"
-	"github.com/stellar/freighter-backend-v2/internal/utils"
 )
 
 const (
@@ -275,7 +275,7 @@ func horizonAtoms(what, s string) (*big.Int, error) {
 	if s == "0" || s == "0.0000000" {
 		return nil, types.ErrSwapNoRoute
 	}
-	v, err := utils.ParseDecimalAmount(s, types.ClassicDecimals)
+	v, err := xoxno.ParseDecimalAmount(s, types.ClassicDecimals)
 	if err != nil {
 		return nil, fmt.Errorf("%w: horizon %s: %v", errInvalidQuote, what, err)
 	}

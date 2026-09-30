@@ -3,9 +3,11 @@ package swap
 import (
 	"errors"
 	"fmt"
+	xoxno "github.com/xoxno/sdk-go"
 	"math/big"
 	"reflect"
 
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -24,38 +26,31 @@ const (
 
 // verifyLifiEnvelope binds both wrapper and Soroswap to the reviewed trade.
 // Keep LI.FI's simulated sequence and expiry intact; validate rather than stamp.
-func verifyLifiEnvelope(encoded string, want envelopeExpectation, sequence, now int64) (uint32, error) {
+func verifyLifiEnvelope(encoded string, want envelopeExpectation, sequence, now int64) (*xdr.Transaction, error) {
 	if want.SrcAtoms == nil || want.SrcAtoms.Sign() <= 0 || want.MinOut == nil || want.MinOut.Sign() <= 0 || want.SrcToken == want.DstToken {
-		return 0, errors.New("invalid LI.FI trade expectation")
+		return nil, errors.New("invalid LI.FI trade expectation")
 	}
-	env, err := decodeEnvelope(encoded)
+	env, op, err := xoxno.ValidateUnsignedSorobanEnvelope(encoded, want.Sender, maxEnvelopeFee)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	tx := &env.V1.Tx
-	if err := checkTransaction(tx, want.Sender); err != nil {
-		return 0, err
-	}
 	if int64(tx.SeqNum) != sequence || tx.Cond.Type != xdr.PreconditionTypePrecondTime || tx.Cond.TimeBounds == nil {
-		return 0, errors.New("LI.FI sequence or preconditions differ from the account")
+		return nil, errors.New("LI.FI sequence or preconditions differ from the account")
 	}
 	bounds := tx.Cond.TimeBounds
 	if bounds.MinTime != 0 || int64(bounds.MaxTime) <= now+20 || uint64(bounds.MaxTime) > uint64(now+lifiMaxLifetime) {
-		return 0, errors.New("LI.FI expiry is outside the signing window")
-	}
-	op, err := singleInvocation(tx.Operations[0])
-	if err != nil {
-		return 0, err
+		return nil, errors.New("LI.FI expiry is outside the signing window")
 	}
 	call := op.HostFunction.InvokeContract
 	args, fee, err := checkLifiCall(call, want, uint64(bounds.MaxTime))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if err := checkLifiAuthorization(op.Auth, call, args, fee, want); err != nil {
-		return 0, err
+		return nil, err
 	}
-	return uint32(tx.Fee), nil
+	return tx, nil
 }
 
 // Bind the fee transfer, net-input Soroswap call and supported venue authorizations.
@@ -286,4 +281,88 @@ func lifiU128(v xdr.ScVal) (*big.Int, error) {
 	n := new(big.Int).SetUint64(uint64(p.Hi))
 	n.Lsh(n, 64)
 	return n.Add(n, new(big.Int).SetUint64(uint64(p.Lo))), nil
+}
+
+const maxEnvelopeFee = 20_000_000
+
+type envelopeExpectation struct {
+	Sender   string
+	Router   string
+	SrcToken string
+	SrcAtoms *big.Int
+	// DstToken and MinOut bind the route payload to the quote.
+	DstToken string
+	MinOut   *big.Int
+}
+
+func sameAuthorizedCall(node xdr.SorobanAuthorizedInvocation, call *xdr.InvokeContractArgs) bool {
+	return node.Function.Type == xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn && reflect.DeepEqual(node.Function.ContractFn, call)
+}
+
+func scValAddress(v xdr.ScVal) (string, error) {
+	a, ok := v.GetAddress()
+	if !ok {
+		return "", errors.New("value is not an address")
+	}
+	return a.String()
+}
+
+func scValI128(v xdr.ScVal) (*big.Int, error) {
+	p, ok := v.GetI128()
+	if !ok {
+		return nil, errors.New("value is not an i128")
+	}
+	n := new(big.Int).SetInt64(int64(p.Hi))
+	n.Lsh(n, 64)
+	return n.Add(n, new(big.Int).SetUint64(uint64(p.Lo))), nil
+}
+
+// names must be in canonical symbol order, as required by Soroban structs.
+func strictScMap(v xdr.ScVal, names ...string) (map[string]xdr.ScVal, error) {
+	if v.Type != xdr.ScValTypeScvMap || v.Map == nil || *v.Map == nil || len(**v.Map) != len(names) {
+		return nil, errors.New("unexpected struct field count")
+	}
+	fields := make(map[string]xdr.ScVal, len(names))
+	for i, entry := range **v.Map {
+		if entry.Key.Type != xdr.ScValTypeScvSymbol || entry.Key.Sym == nil || string(*entry.Key.Sym) != names[i] {
+			return nil, errors.New("unexpected or unordered struct field")
+		}
+		fields[names[i]] = entry.Val
+	}
+	return fields, nil
+}
+
+// Historical receipts validate display identity, not current quote expiry or fees.
+func readLifiReceipt(envelope, result, meta, viewer string, index int) (*xoxno.SwapReceipt, error) {
+	invocation, err := xoxno.ReadConfirmedInvocation(envelope, result, meta, index)
+	if err != nil || invocation == nil {
+		return nil, err
+	}
+	call := invocation.Call
+	if addressOf(call) != lifiRouter || string(call.FunctionName) != "swap" || len(call.Args) != 2 || !addressEquals(call.Args[1], viewer) {
+		return nil, nil
+	}
+	fields, err := strictScMap(call.Args[0], "args", "fees", "interface", "min_amount_out", "token_in", "token_out", "tracking_id")
+	if err != nil {
+		return nil, nil
+	}
+	iface := fields["interface"]
+	if iface.Type != xdr.ScValTypeScvSymbol || iface.Sym == nil || string(*iface.Sym) != "soroswap_aggregator" {
+		return nil, nil
+	}
+	in, inErr := scValAddress(fields["token_in"])
+	out, outErr := scValAddress(fields["token_out"])
+	args, argsErr := scVec(fields["args"])
+	if inErr != nil || outErr != nil || !strkey.IsValidContractAddress(in) || !strkey.IsValidContractAddress(out) || in == out || argsErr != nil || len(args) != 7 || !addressEquals(args[0], in) || !addressEquals(args[1], out) || !addressEquals(args[5], viewer) {
+		return nil, nil
+	}
+	input, err := scValI128(args[2])
+	if err != nil || input.Sign() <= 0 {
+		return nil, nil
+	}
+	amount, err := invocation.ReceivedTokenAmount(out, viewer, "")
+	if err != nil || amount == nil {
+		return nil, err
+	}
+	return &xoxno.SwapReceipt{TokenIn: in, TokenOut: out, AmountIn: input, AmountOut: amount}, nil
 }

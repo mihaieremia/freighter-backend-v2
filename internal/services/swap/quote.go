@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	xoxno "github.com/xoxno/sdk-go"
 	"math/big"
 	"sync"
 	"time"
@@ -11,7 +12,6 @@ import (
 	"github.com/stellar/freighter-backend-v2/internal/logger"
 	"github.com/stellar/freighter-backend-v2/internal/metrics"
 	"github.com/stellar/freighter-backend-v2/internal/types"
-	"github.com/stellar/freighter-backend-v2/internal/utils"
 )
 
 const quoteServiceName = "swap-quote"
@@ -207,7 +207,7 @@ func altCode(err error) string {
 }
 
 func buildQuote(req types.SwapQuoteRequest, c *candidate, alts []types.SwapQuoteAlternative) (*types.SwapQuote, error) {
-	srcAtoms, err := utils.ParseDecimalAmount(req.SourceAmount, req.SourceDecimals)
+	srcAtoms, err := xoxno.ParseDecimalAmount(req.SourceAmount, req.SourceDecimals)
 	if err != nil {
 		return nil, err
 	}

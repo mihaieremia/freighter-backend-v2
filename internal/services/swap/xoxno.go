@@ -76,11 +76,7 @@ func (s *xoxnoSource) Quote(ctx context.Context, req types.SwapQuoteRequest) (_ 
 	if e != nil {
 		return nil, xoxnoError(e)
 	}
-	hops := make([]types.SwapRouteHop, len(q.Route))
-	for i, h := range q.Route {
-		hops[i] = types.SwapRouteHop{Venue: h.Venue, Kind: h.Kind, Pool: h.Pool, From: h.From, To: h.To}
-	}
-	return &candidate{Source: s.Name(), DestAmount: q.DestAmount, DestAmountMin: q.DestAmountMin, DestDecimals: q.DestDecimals, Route: hops, Transaction: q.Transaction, PriceImpact: q.PriceImpact, RequiresTrustline: !r.PrepareTransaction, NetworkFee: q.NetworkFee}, nil
+	return &candidate{Source: s.Name(), DestAmount: q.DestAmount, DestAmountMin: q.DestAmountMin, DestDecimals: q.DestDecimals, Route: q.Route, Transaction: q.Transaction, PriceImpact: q.PriceImpact, RequiresTrustline: !r.PrepareTransaction, NetworkFee: q.NetworkFee}, nil
 }
 func (s *xoxnoSource) QuoteInput(ctx context.Context, req types.SwapQuoteRequest) (_ *big.Int, err error) {
 	defer recordQuoteCall(s.svcMetrics, types.SwapSourceXoxno+"_input", req.Network, time.Now(), &err)

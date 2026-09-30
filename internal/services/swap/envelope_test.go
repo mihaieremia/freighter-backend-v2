@@ -9,6 +9,8 @@ import (
 	"github.com/stellar/freighter-backend-v2/internal/utils"
 )
 
+const routerFunction = "execute_strategy"
+
 func addrVal(a xdr.ScAddress) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &a}
 }
@@ -175,4 +177,10 @@ func buildEnvelope(t *testing.T, o envOpts) string {
 	out, err := xdr.MarshalBase64(env)
 	require.NoError(t, err)
 	return out
+}
+
+func decodeEnvelope(encoded string) (xdr.TransactionEnvelope, error) {
+	var env xdr.TransactionEnvelope
+	err := xdr.SafeUnmarshalBase64(encoded, &env)
+	return env, err
 }

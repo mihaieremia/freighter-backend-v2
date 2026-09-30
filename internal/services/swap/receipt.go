@@ -34,7 +34,7 @@ func (s *receiptService) GetSwapReceipt(ctx context.Context, net, hash, viewer s
 	defer recordCall(s.svcMetrics, s.Name(), "GetSwapReceipt", net, time.Now(), &err)
 	receipt := &types.SwapReceipt{Network: net, TransactionHash: hash, Viewer: viewer, OperationIndex: operationIndex, Status: "unavailable"}
 	cfg, ok := s.networks[net]
-	if !ok || !utils.IsValidContractID(cfg.Router) {
+	if !ok && net != types.PUBLIC {
 		return receipt, nil
 	}
 	base, err := s.horizon.baseURL(net)
@@ -72,7 +72,13 @@ func (s *receiptService) GetSwapReceipt(ctx context.Context, net, hash, viewer s
 	if meta == "" {
 		return receipt, nil
 	}
-	result, err := xoxno.ReadReceipt(tx.EnvelopeXDR, tx.ResultXDR, meta, cfg.Router, viewer, operationIndex)
+	var result *xoxno.SwapReceipt
+	if utils.IsValidContractID(cfg.Router) {
+		result, err = xoxno.ReadReceipt(tx.EnvelopeXDR, tx.ResultXDR, meta, cfg.Router, viewer, operationIndex)
+	}
+	if err == nil && result == nil && net == types.PUBLIC {
+		result, err = readLifiReceipt(tx.EnvelopeXDR, tx.ResultXDR, meta, viewer, operationIndex)
+	}
 	if err != nil {
 		return nil, receiptUpstreamError(err)
 	}
