@@ -1,0 +1,264 @@
+[
+  {
+    "name": "equal split with remainder",
+    "input": "4001",
+    "parts": [
+      1,
+      1
+    ],
+    "amounts": [
+      "1995",
+      "1996"
+    ],
+    "accept": true
+  },
+  {
+    "name": "weighted split",
+    "input": "101",
+    "parts": [
+      1,
+      2
+    ],
+    "amounts": [
+      "33",
+      "68"
+    ],
+    "accept": true
+  },
+  {
+    "name": "three routes with remainder",
+    "input": "101",
+    "parts": [
+      1,
+      1,
+      1
+    ],
+    "amounts": [
+      "33",
+      "33",
+      "35"
+    ],
+    "accept": true
+  },
+  {
+    "name": "wrong weights with correct total",
+    "input": "4001",
+    "parts": [
+      1,
+      1
+    ],
+    "amounts": [
+      "1994",
+      "1997"
+    ],
+    "accept": false
+  },
+  {
+    "name": "underspend",
+    "input": "4001",
+    "parts": [
+      1,
+      1
+    ],
+    "amounts": [
+      "1995",
+      "1995"
+    ],
+    "accept": false
+  },
+  {
+    "name": "overspend",
+    "input": "4001",
+    "parts": [
+      1,
+      1
+    ],
+    "amounts": [
+      "1995",
+      "1997"
+    ],
+    "accept": false
+  },
+  {
+    "name": "zero part",
+    "input": "151",
+    "parts": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0
+    ],
+    "amounts": [
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "11"
+    ],
+    "accept": false
+  },
+  {
+    "name": "u32 parts overflow",
+    "input": "10001",
+    "parts": [
+      4294967295,
+      4294967295
+    ],
+    "amounts": [
+      "4988",
+      "4988"
+    ],
+    "accept": false
+  },
+  {
+    "name": "maximum single weight",
+    "input": "10",
+    "parts": [
+      4294967295
+    ],
+    "amounts": [
+      "10"
+    ],
+    "accept": true
+  },
+  {
+    "name": "venue below minimum",
+    "input": "19",
+    "parts": [
+      1,
+      1
+    ],
+    "amounts": [
+      "9",
+      "10"
+    ],
+    "accept": false
+  },
+  {
+    "name": "zero venue amount",
+    "input": "20",
+    "parts": [
+      1,
+      1
+    ],
+    "amounts": [
+      "0",
+      "20"
+    ],
+    "accept": false
+  },
+  {
+    "name": "maximum route count",
+    "input": "151",
+    "parts": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "amounts": [
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "11"
+    ],
+    "accept": true
+  },
+  {
+    "name": "too many routes",
+    "input": "161",
+    "parts": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "amounts": [
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "10",
+      "11"
+    ],
+    "accept": false
+  },
+  {
+    "name": "i128 multiplication overflow",
+    "input": "85070591730234615865843651857942052864",
+    "parts": [
+      3,
+      1
+    ],
+    "amounts": [
+      "63643436438181771994634282046222898299",
+      "21214478812727257331544760682074299433"
+    ],
+    "accept": false
+  }
+]
