@@ -203,6 +203,9 @@ type StellarExpertService interface {
 	Service
 	GetAsset(ctx context.Context, network, assetID string) (*StellarExpertAsset, error)
 	GetAssetCandles(ctx context.Context, network, assetID string, from, to time.Time, resolutionSec int) ([]StellarExpertCandle, error)
+	// GetContractAsset returns the classic asset a Stellar Asset Contract wraps
+	// ("XLM" or "CODE-ISSUER-N"), or "" for a contract of any other kind.
+	GetContractAsset(ctx context.Context, network, contractID string) (string, error)
 }
 
 // PriceEntry is the per-token shape returned to the client. Numeric fields
@@ -288,4 +291,12 @@ type TokenStatsService interface {
 type SwapQuoteService interface {
 	Service
 	GetBestQuote(ctx context.Context, req SwapQuoteRequest) (*SwapQuote, error)
+}
+
+// SwapTokensService lists the tokens the swap aggregator can route.
+type SwapTokensService interface {
+	Service
+	GetSwapTokens(ctx context.Context, network string) ([]SwapToken, error)
+	// GetTokenCatalog lists every token XOXNO registers, swappable or not.
+	GetTokenCatalog(ctx context.Context, network string) ([]CatalogToken, error)
 }

@@ -43,6 +43,8 @@ func candlesAged(now time.Time, oldestAge time.Duration, closes ...float64) []ty
 // fakeStellarExpert is a programmable stub for the StellarExpertService
 // interface. Tests configure assets via Set and inspect call counts via Calls.
 type fakeStellarExpert struct {
+	types.StellarExpertService
+
 	mu          sync.Mutex
 	assets      map[string]*types.StellarExpertAsset
 	candles     map[string][]types.StellarExpertCandle
@@ -1101,6 +1103,7 @@ func (c *errCache) MGetJSON(context.Context, []string, func() any) (map[string]a
 	}
 	return map[string]any{}, nil
 }
+
 func (c *errCache) SetJSON(context.Context, string, any, time.Duration) error {
 	if c.setErr != nil {
 		return fmt.Errorf("redis SET: %w", c.setErr)

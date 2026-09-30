@@ -13,6 +13,7 @@ import (
 
 	"github.com/stellar/freighter-backend-v2/internal/metrics"
 	"github.com/stellar/freighter-backend-v2/internal/types"
+	"github.com/stellar/freighter-backend-v2/internal/utils"
 )
 
 const (
@@ -163,6 +164,32 @@ func (s *stellarExpertService) GetAssetCandles(ctx context.Context, network, ass
 		return nil, err
 	}
 	return candles, nil
+}
+
+// GetContractAsset returns the classic asset a Stellar Asset Contract wraps, in
+// Stellar Expert's wire format, or "" for a contract of any other kind. A
+// Soroban-native token has no such asset, so the answer never changes for a given
+// contract and callers may keep it.
+func (s *stellarExpertService) GetContractAsset(ctx context.Context, network, contractID string) (_ string, err error) {
+	start := time.Now()
+	defer func() {
+		metrics.Record(s.svcMetrics, stellarExpertServiceName, "GetContractAsset", network, time.Since(start).Seconds(), err)
+	}()
+
+	if !utils.IsValidContractID(contractID) {
+		return "", fmt.Errorf("invalid contract id %q", contractID)
+	}
+	baseURL, err := s.baseURLForNetwork(network)
+	if err != nil {
+		return "", err
+	}
+	var contract struct {
+		Asset string `json:"asset"`
+	}
+	if err := s.doJSON(ctx, fmt.Sprintf("%s/contract/%s", baseURL, contractID), "contract", &contract); err != nil {
+		return "", err
+	}
+	return contract.Asset, nil
 }
 
 // doJSON issues a GET to reqURL and decodes a 200 response body into dest.

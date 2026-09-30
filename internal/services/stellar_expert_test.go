@@ -6,15 +6,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/stellar/freighter-backend-v2/internal/metrics"
 	"github.com/stellar/freighter-backend-v2/internal/types"
 )
+
+func testContract(b byte) string {
+	raw := make([]byte, 32)
+	raw[0] = b
+	return strkey.MustEncode(strkey.VersionByteContract, raw)
+}
 
 func newTestStellarExpert(t *testing.T, handler http.Handler) (types.StellarExpertService, *httptest.Server) {
 	t.Helper()
@@ -334,4 +342,55 @@ func TestStellarExpert_NotFoundAndMalformedCarryTheirHTTPStatus(t *testing.T) {
 				"an upstream status must never be labelled as our own internal failure")
 		})
 	}
+}
+
+func TestStellarExpert_GetContractAsset(t *testing.T) {
+	t.Parallel()
+	const usdc = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN-1"
+	contract := testContract(1)
+	cases := map[string]struct {
+		body string
+		want string
+	}{
+		"a stellar asset contract names its asset": {`{"contract":"` + contract + `","asset":"` + usdc + `"}`, usdc},
+		"native is XLM":                  {`{"contract":"` + contract + `","asset":"XLM"}`, "XLM"},
+		"a wasm contract wraps no asset": {`{"contract":"` + contract + `","wasm":"abc","token_name":"T"}`, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var gotPath string
+			svc, _ := newTestStellarExpert(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				_, _ = w.Write([]byte(tc.body))
+			}))
+
+			got, err := svc.GetContractAsset(context.Background(), types.PUBLIC, contract)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, "/explorer/public/contract/"+contract, gotPath)
+		})
+	}
+}
+
+func TestStellarExpert_GetContractAssetUnknownContract(t *testing.T) {
+	t.Parallel()
+	svc, _ := newTestStellarExpert(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+
+	_, err := svc.GetContractAsset(context.Background(), types.PUBLIC, testContract(1))
+	assert.ErrorIs(t, err, ErrAssetNotFound)
+}
+
+func TestStellarExpert_GetContractAssetRejectsANonContractIDWithoutAskingUpstream(t *testing.T) {
+	t.Parallel()
+	var called atomic.Bool
+	svc, _ := newTestStellarExpert(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called.Store(true) }))
+
+	for _, id := range []string{"", "CX", "../asset/XLM", testIssuer} {
+		_, err := svc.GetContractAsset(context.Background(), types.PUBLIC, id)
+		assert.Error(t, err, id)
+	}
+	assert.False(t, called.Load(), "an id that is not a contract must not reach the upstream path")
 }

@@ -480,15 +480,17 @@ func TestApiServer_xoxnoSwapNetworks(t *testing.T) {
 	t.Parallel()
 
 	s := &ApiServer{cfg: &config.Config{SwapConfig: config.SwapConfig{
-		XoxnoEnabled:         true,
-		XoxnoPubnetQuoteURL:  "https://quote.example",
-		XoxnoPubnetRouter:    "CPUBROUTER",
-		XoxnoTestnetQuoteURL: "https://testnet-quote.example",
-		XoxnoTestnetRouter:   "CTESTROUTER",
+		XoxnoEnabled:             true,
+		XoxnoPubnetQuoteURL:      "https://quote.example",
+		XoxnoPubnetRouter:        "CPUBROUTER",
+		XoxnoPubnetTokenListURL:  "https://tokens.example/pubnet",
+		XoxnoTestnetQuoteURL:     "https://testnet-quote.example",
+		XoxnoTestnetRouter:       "CTESTROUTER",
+		XoxnoTestnetTokenListURL: "https://tokens.example/testnet",
 	}}}
 	assert.Equal(t, map[string]swap.Network{
-		types.PUBLIC:  {QuoteURL: "https://quote.example", Router: "CPUBROUTER"},
-		types.TESTNET: {QuoteURL: "https://testnet-quote.example", Router: "CTESTROUTER"},
+		types.PUBLIC:  {QuoteURL: "https://quote.example", Router: "CPUBROUTER", TokenListURL: "https://tokens.example/pubnet"},
+		types.TESTNET: {QuoteURL: "https://testnet-quote.example", Router: "CTESTROUTER", TokenListURL: "https://tokens.example/testnet"},
 	}, s.xoxnoSwapNetworks())
 }
 
@@ -517,12 +519,15 @@ func TestApiServer_SwapWithTheXoxnoSourceOffAsksOnlyHorizon(t *testing.T) {
 	cfg.PricesConfig = config.PricesConfig{StellarExpertAPIKey: "test-key", StellarExpertPubnetURL: xoxno.URL, StellarExpertTestnetURL: xoxno.URL}
 	cfg.HorizonConfig = config.HorizonConfig{HorizonPubnetURL: horizon.URL, HorizonTestnetURL: horizon.URL}
 	cfg.SwapConfig = config.SwapConfig{
-		XoxnoEnabled:         false,
-		XoxnoPubnetQuoteURL:  xoxno.URL,
-		XoxnoPubnetRouter:    "CPUBROUTER",
-		XoxnoTestnetQuoteURL: xoxno.URL,
-		XoxnoTestnetRouter:   "CTESTROUTER",
-		SourceTimeout:        time.Second,
+		XoxnoEnabled:             false,
+		XoxnoPubnetQuoteURL:      xoxno.URL,
+		XoxnoPubnetRouter:        "CPUBROUTER",
+		XoxnoPubnetTokenListURL:  xoxno.URL + "/stellar/tokens",
+		XoxnoTestnetQuoteURL:     xoxno.URL,
+		XoxnoTestnetRouter:       "CTESTROUTER",
+		XoxnoTestnetTokenListURL: xoxno.URL + "/stellar/tokens",
+		SourceTimeout:            time.Second,
+		TokenCacheTTL:            time.Minute,
 	}
 	s := newTestAPIServer(t, cfg)
 	require.NoError(t, s.initServices())
@@ -540,6 +545,17 @@ func TestApiServer_SwapWithTheXoxnoSourceOffAsksOnlyHorizon(t *testing.T) {
 	require.Len(t, quote.Data.Alternatives, 1)
 	assert.Equal(t, "horizon", quote.Data.Alternatives[0].Source)
 	assert.Positive(t, horizonCalls.Load())
+
+	for _, target := range []string{
+		"/api/v1/swap/tokens?network=PUBLIC",
+		"/api/v1/swap/tokens?network=TESTNET",
+		"/api/v1/swap/tokens?network=PUBLIC&scope=all",
+		"/api/v1/swap/tokens?network=TESTNET&scope=all",
+	} {
+		tokensRR := httptest.NewRecorder()
+		mux.ServeHTTP(tokensRR, httptest.NewRequest(http.MethodGet, target, nil))
+		assert.JSONEq(t, `{"data":[]}`, tokensRR.Body.String(), target)
+	}
 
 	assert.Zero(t, xoxnoCalls.Load(), "no request reaches an XOXNO or Stellar Expert host")
 }
