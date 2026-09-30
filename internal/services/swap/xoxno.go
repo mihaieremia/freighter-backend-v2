@@ -102,31 +102,3 @@ func xoxnoError(e error) error {
 	}
 	return e
 }
-
-// atoms parses a positive base-10 integer, or returns nil.
-func atoms(s string) *big.Int {
-	if v, ok := new(big.Int).SetString(s, 10); ok && v.Sign() > 0 {
-		return v
-	}
-	return nil
-}
-
-// invalidQuote wraps errInvalidQuote with the reason.
-func invalidQuote(format string, args ...any) error {
-	return fmt.Errorf("%w: "+format, append([]any{errInvalidQuote}, args...)...)
-}
-
-// checkSlippage returns the quoted output and minimum output after requiring
-// 0 < minimum <= output and a minimum no lower than the requested slippage allows.
-func checkSlippage(output, minimum string, slippagePercent float64) (out, minOut *big.Int, err error) {
-	if out = atoms(output); out == nil {
-		return nil, nil, invalidQuote("quote output %q is not positive", output)
-	}
-	if minOut = atoms(minimum); minOut == nil || minOut.Cmp(out) > 0 {
-		return nil, nil, invalidQuote("quote minimum output %q is not in (0, output]", minimum)
-	}
-	if minOut.Cmp(minAmountOut(out, slippagePercent)) < 0 {
-		return nil, nil, invalidQuote("quote minimum output %q is below the requested slippage", minimum)
-	}
-	return out, minOut, nil
-}
