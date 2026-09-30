@@ -50,6 +50,7 @@ type ApiServer struct {
 	tokenStatsService    types.TokenStatsService
 	swapQuoteService     types.SwapQuoteService
 	swapTokensService    types.SwapTokensService
+	swapReceiptService   types.SwapReceiptService
 	registry             *prometheus.Registry
 	appMetrics           *metrics.Metrics
 	authMode             auth.Mode
@@ -170,6 +171,11 @@ func (s *ApiServer) initServices() error {
 		SourceTimeout:     s.cfg.SwapConfig.SourceTimeout,
 	}, s.appMetrics.Service)
 	s.swapTokensService = swap.NewTokensService(networks, stellarExpert, s.cfg.SwapConfig.TokenCacheTTL, s.appMetrics.Service)
+	s.swapReceiptService = swap.NewReceiptService(swap.Config{
+		HorizonPubnetURL:  s.cfg.HorizonConfig.HorizonPubnetURL,
+		HorizonTestnetURL: s.cfg.HorizonConfig.HorizonTestnetURL,
+		Networks:          networks,
+	}, stellarExpert, s.appMetrics.Service)
 
 	return nil
 }
@@ -278,6 +284,7 @@ func (s *ApiServer) routes() ([]route, error) {
 	}
 	swapQuoteHandler := handlers.NewSwapQuoteHandler(s.swapQuoteService)
 	swapTokensHandler := handlers.NewSwapTokensHandler(s.swapTokensService)
+	swapReceiptHandler := handlers.NewSwapReceiptHandler(s.swapReceiptService)
 	whoamiHandler := handlers.NewWhoamiHandler()
 
 	return []route{
@@ -318,6 +325,7 @@ func (s *ApiServer) routes() ([]route, error) {
 		{http.MethodGet, "/api/v1/token-stats", handlers.CustomHandler(tokenStatsHandler.GetTokenStats), true, true},
 		{http.MethodPost, "/api/v1/swap/quote", handlers.CustomHandler(swapQuoteHandler.GetSwapQuote), true, true},
 		{http.MethodGet, "/api/v1/swap/tokens", handlers.CustomHandler(swapTokensHandler.GetSwapTokens), true, true},
+		{http.MethodGet, "/api/v1/swap/receipt/{transactionHash}", handlers.CustomHandler(swapReceiptHandler.GetSwapReceipt), true, true},
 		{http.MethodGet, "/api/v1/auth/whoami", handlers.CustomHandler(whoamiHandler.Whoami), true, true},
 	}, nil
 }

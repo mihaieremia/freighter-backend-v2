@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stellar/freighter-backend-v2/internal/metrics"
@@ -192,6 +193,25 @@ func (s *stellarExpertService) GetContractAsset(ctx context.Context, network, co
 	return contract.Asset, nil
 }
 
+// GetTransactionMeta returns confirmed metadata, or empty when not indexed.
+func (s *stellarExpertService) GetTransactionMeta(ctx context.Context, network, transactionHash string) (_ string, err error) {
+	start := time.Now()
+	defer func() {
+		metrics.Record(s.svcMetrics, stellarExpertServiceName, "GetTransactionMeta", network, time.Since(start).Seconds(), err)
+	}()
+	baseURL, err := s.baseURLForNetwork(network)
+	if err != nil {
+		return "", err
+	}
+	var receipt struct {
+		Meta string `json:"meta"`
+	}
+	if err := s.doJSON(ctx, strings.TrimRight(baseURL, "/")+"/tx/"+url.PathEscape(transactionHash), "receipt", &receipt); err != nil {
+		return "", err
+	}
+	return receipt.Meta, nil
+}
+
 // doJSON issues a GET to reqURL and decodes a 200 response body into dest.
 // Every non-200 becomes an *UpstreamError so the service-error metric always
 // carries the real status rather than "internal"; 404, 400 and the three
@@ -199,22 +219,33 @@ func (s *stellarExpertService) GetContractAsset(ctx context.Context, network, co
 // errors.Is — 404 → ErrAssetNotFound and 400 → ErrAssetMalformed for
 // "unpriceable, do not retry", 401/402/403 → ErrUpstreamAuth. label
 // ("asset"/"candles") disambiguates the endpoint in decode/status error
-// messages.
+// messages. Receipts reject redirects and bound reads; a 404 means metadata
+// is not indexed yet.
 func (s *stellarExpertService) doJSON(ctx context.Context, reqURL, label string, dest any) error {
 	req, err := s.newRequest(ctx, reqURL)
 	if err != nil {
 		return err
 	}
 
-	resp, err := s.httpClient.Do(req)
+	client := s.httpClient
+	if label == "receipt" {
+		bounded := *client
+		bounded.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &bounded
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return &metrics.UpstreamError{Kind: "http_error", Err: err}
 	}
 	defer resp.Body.Close() //nolint:errcheck
+	var body io.Reader = resp.Body
+	if label == "receipt" {
+		body = io.LimitReader(resp.Body, 1<<20)
+	}
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
+		if err := json.NewDecoder(body).Decode(dest); err != nil {
 			return fmt.Errorf("decoding stellar expert %s response: %w", label, err)
 		}
 		return nil
@@ -233,7 +264,13 @@ func (s *stellarExpertService) doJSON(ctx context.Context, reqURL, label string,
 		// FreighterBackendV2StellarExpertDependencyErrors watches, which is
 		// the only outage signal /token-stats has left now that it degrades
 		// to an empty 200.
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, body)
+		if label == "receipt" {
+			if resp.StatusCode == http.StatusNotFound {
+				return nil
+			}
+			return &metrics.UpstreamError{Kind: "http_error", Code: resp.StatusCode, Err: fmt.Errorf("stellar expert receipt status %d", resp.StatusCode)}
+		}
 		sentinel := ErrAssetNotFound
 		if resp.StatusCode == http.StatusBadRequest {
 			sentinel = ErrAssetMalformed
@@ -247,14 +284,14 @@ func (s *stellarExpertService) doJSON(ctx context.Context, reqURL, label string,
 		// Our credentials, not this asset. Wrapped so errors.Is finds the
 		// sentinel (UpstreamError implements Unwrap) while the metric keeps
 		// the precise http_error:<code> label.
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, body)
 		return &metrics.UpstreamError{
 			Kind: "http_error",
 			Code: resp.StatusCode,
 			Err:  fmt.Errorf("%w: stellar expert %s status %d", ErrUpstreamAuth, label, resp.StatusCode),
 		}
 	default:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.Copy(io.Discard, body)
 		return &metrics.UpstreamError{Kind: "http_error", Code: resp.StatusCode, Err: fmt.Errorf("stellar expert %s status %d", label, resp.StatusCode)}
 	}
 }
