@@ -2,6 +2,7 @@ package swap
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"reflect"
 
@@ -17,6 +18,8 @@ const (
 	lifiFeeRecipient = "GAZYY5SJZNAVWZWVKJ2E74W2WKZP5BACLVV6FVHC5NZWXPKTQEDOYUR4"
 	lifiFeeBPS       = 25
 	lifiMaxLifetime  = 600
+	lifiMaxRoutes    = 15
+	lifiMinAmount    = 10
 )
 
 // verifyLifiEnvelope binds both wrapper and Soroswap to the reviewed trade.
@@ -40,9 +43,6 @@ func verifyLifiEnvelope(encoded string, want envelopeExpectation, sequence, now 
 	if bounds.MinTime != 0 || int64(bounds.MaxTime) <= now+20 || uint64(bounds.MaxTime) > uint64(now+lifiMaxLifetime) {
 		return 0, errors.New("LI.FI expiry is outside the signing window")
 	}
-	if f := tx.Ext.SorobanData.ResourceFee; f < 0 || uint64(f) > uint64(tx.Fee) {
-		return 0, errors.New("invalid resource fee")
-	}
 	op, err := singleInvocation(tx.Operations[0])
 	if err != nil {
 		return 0, err
@@ -52,58 +52,103 @@ func verifyLifiEnvelope(encoded string, want envelopeExpectation, sequence, now 
 	if err != nil {
 		return 0, err
 	}
-	if len(op.Auth) != 1 || op.Auth[0].Credentials.Type != xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount {
-		return 0, errors.New("LI.FI requires exactly one source-account authorization")
+	if err := checkLifiAuthorization(op.Auth, call, args, fee, want); err != nil {
+		return 0, err
 	}
-	root := op.Auth[0].RootInvocation
+	return uint32(tx.Fee), nil
+}
+
+// Bind the fee transfer, net-input Soroswap call and supported venue authorizations.
+func checkLifiAuthorization(auth []xdr.SorobanAuthorizationEntry, call *xdr.InvokeContractArgs, args []xdr.ScVal, fee *big.Int, want envelopeExpectation) error {
+	if len(auth) != 1 || auth[0].Credentials.Type != xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount {
+		return errors.New("LI.FI requires exactly one source-account authorization")
+	}
+	root := auth[0].RootInvocation
 	if !sameAuthorizedCall(root, call) || len(root.SubInvocations) != 2 {
-		return 0, errors.New("LI.FI authorization root or fee/swap count differs")
+		return errors.New("LI.FI authorization root or fee/swap count differs")
 	}
 	if err := checkLifiTransfer(root.SubInvocations[0], want, lifiFeeRecipient, fee); err != nil {
-		return 0, err
+		return err
 	}
 	swap := root.SubInvocations[1]
 	netInput := new(big.Int).Sub(want.SrcAtoms, fee)
-	netArgs := append([]xdr.ScVal(nil), args...)
-	n := new(big.Int).Set(netInput)
-	mask := new(big.Int).SetUint64(^uint64(0))
-	netArgs[2] = xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &xdr.Int128Parts{Hi: xdr.Int64(new(big.Int).Rsh(n, 64).Int64()), Lo: xdr.Uint64(new(big.Int).And(netInput, mask).Uint64())}}
 	fn := swap.Function.ContractFn
-	if swap.Function.Type != xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn || fn == nil || addressOf(fn) != lifiSoroswap || string(fn.FunctionName) != "swap_exact_tokens_for_tokens" || !reflect.DeepEqual(fn.Args, netArgs) || len(swap.SubInvocations) == 0 {
-		return 0, errors.New("LI.FI does not authorize the expected Soroswap swap")
+	if swap.Function.Type != xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn || fn == nil || addressOf(fn) != lifiSoroswap || string(fn.FunctionName) != "swap_exact_tokens_for_tokens" || len(fn.Args) != len(args) {
+		return errors.New("LI.FI does not authorize the expected Soroswap swap")
 	}
-	routes, _ := scVec(args[4])
+	for i, arg := range fn.Args {
+		if i == 2 {
+			if amount, err := scValI128(arg); err != nil || amount.Cmp(netInput) != 0 {
+				return errors.New("LI.FI Soroswap net input differs")
+			}
+		} else if !reflect.DeepEqual(arg, args[i]) {
+			return errors.New("LI.FI Soroswap arguments differ")
+		}
+	}
+	routes, _ := scVec(args[4]) // Already validated by checkLifiCall.
 	if len(routes) != len(swap.SubInvocations) {
-		return 0, errors.New("LI.FI route/auth count differs")
+		return errors.New("LI.FI route/auth count differs")
 	}
-	spent := new(big.Int)
+	parts := make([]uint32, len(routes))
+	amounts := make([]*big.Int, len(routes))
 	// ponytail: support Aquarius authorization only; add other AMM ABIs when verified.
 	for i, venue := range swap.SubInvocations {
-		fn := venue.Function.ContractFn
-		if venue.Function.Type != xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn || fn == nil ||
-			addressOf(fn) != lifiAquarius || string(fn.FunctionName) != "swap_chained" || len(fn.Args) != 5 ||
-			!addressEquals(fn.Args[0], want.Sender) || !addressEquals(fn.Args[2], want.SrcToken) || len(venue.SubInvocations) != 1 {
-			return 0, errors.New("unsupported LI.FI venue authorization")
+		part, amount, err := checkLifiAquariusAuthorization(venue, routes[i], want)
+		if err != nil {
+			return fmt.Errorf("LI.FI Aquarius route %d: %w", i, err)
 		}
-		if err := checkLifiAquariusRoute(routes[i], fn.Args[1], want); err != nil {
-			return 0, err
-		}
-		amount, err := lifiU128(fn.Args[3])
-		minimum, minErr := lifiU128(fn.Args[4])
-		if err != nil || amount.Sign() <= 0 || minErr != nil || minimum.Sign() < 0 {
-			return 0, errors.New("invalid venue amount")
-		}
-		if err := checkLifiTransfer(venue.SubInvocations[0], want, lifiAquarius, amount); err != nil {
-			return 0, err
-		}
-		if spent.Add(spent, amount).Cmp(netInput) > 0 {
-			return 0, errors.New("LI.FI spends more than input")
-		}
+		parts[i], amounts[i] = part, amount
 	}
-	if spent.Cmp(netInput) != 0 {
-		return 0, errors.New("LI.FI spend does not match net input")
+	return checkLifiDistribution(parts, amounts, netInput)
+}
+
+func checkLifiAquariusAuthorization(venue xdr.SorobanAuthorizedInvocation, route xdr.ScVal, want envelopeExpectation) (uint32, *big.Int, error) {
+	fn := venue.Function.ContractFn
+	if venue.Function.Type != xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn || fn == nil ||
+		addressOf(fn) != lifiAquarius || string(fn.FunctionName) != "swap_chained" || len(fn.Args) != 5 ||
+		!addressEquals(fn.Args[0], want.Sender) || !addressEquals(fn.Args[2], want.SrcToken) || len(venue.SubInvocations) != 1 {
+		return 0, nil, errors.New("unsupported venue authorization")
 	}
-	return uint32(tx.Fee), nil
+	parts, err := checkLifiAquariusRoute(route, fn.Args[1], want)
+	if err != nil {
+		return 0, nil, err
+	}
+	amount, err := lifiU128(fn.Args[3])
+	minimum, minErr := lifiU128(fn.Args[4])
+	if err != nil || amount.Cmp(big.NewInt(lifiMinAmount)) < 0 || minErr != nil || minimum.Sign() != 0 {
+		return 0, nil, errors.New("invalid venue amount or minimum")
+	}
+	if err := checkLifiTransfer(venue.SubInvocations[0], want, lifiAquarius, amount); err != nil {
+		return 0, nil, err
+	}
+	return parts, amount, nil
+}
+
+// Soroswap floors each weighted allocation and sends the remainder to the last route.
+func checkLifiDistribution(parts []uint32, amounts []*big.Int, input *big.Int) error {
+	var totalParts uint64
+	for _, part := range parts {
+		totalParts += uint64(part)
+	}
+	if totalParts > uint64(^uint32(0)) {
+		return errors.New("LI.FI distribution parts overflow u32")
+	}
+	remaining := new(big.Int).Set(input)
+	for i, part := range parts {
+		expected := new(big.Int).Set(remaining)
+		if i != len(parts)-1 {
+			expected.Mul(input, new(big.Int).SetUint64(uint64(part)))
+			if expected.BitLen() > 127 {
+				return errors.New("LI.FI distribution multiplication overflows i128")
+			}
+			expected.Quo(expected, new(big.Int).SetUint64(totalParts))
+		}
+		if amounts[i].Cmp(expected) != 0 {
+			return fmt.Errorf("LI.FI route %d amount differs from its distribution", i)
+		}
+		remaining.Sub(remaining, expected)
+	}
+	return nil
 }
 
 func checkLifiCall(call *xdr.InvokeContractArgs, want envelopeExpectation, deadline uint64) ([]xdr.ScVal, *big.Int, error) {
@@ -113,6 +158,9 @@ func checkLifiCall(call *xdr.InvokeContractArgs, want envelopeExpectation, deadl
 	fields, err := strictScMap(call.Args[0], "args", "fees", "interface", "min_amount_out", "token_in", "token_out", "tracking_id")
 	if err != nil {
 		return nil, nil, err
+	}
+	if _, err := scValI128(fields["tracking_id"]); err != nil {
+		return nil, nil, errors.New("LI.FI tracking ID is not an i128")
 	}
 	iface := fields["interface"]
 	minimum, err := scValI128(fields["min_amount_out"])
@@ -133,7 +181,7 @@ func checkLifiCall(call *xdr.InvokeContractArgs, want envelopeExpectation, deadl
 		return nil, nil, errors.New("LI.FI Soroswap trade differs from the quote")
 	}
 	route, err := scVec(args[4])
-	if err != nil || len(route) == 0 {
+	if err != nil || len(route) == 0 || len(route) > lifiMaxRoutes {
 		return nil, nil, errors.New("LI.FI route missing")
 	}
 	fees, err := scVec(fields["fees"])
@@ -152,28 +200,6 @@ func checkLifiCall(call *xdr.InvokeContractArgs, want envelopeExpectation, deadl
 	return args, fee, nil
 }
 
-func strictScMap(v xdr.ScVal, names ...string) (map[string]xdr.ScVal, error) {
-	if v.Type != xdr.ScValTypeScvMap || v.Map == nil || *v.Map == nil || len(**v.Map) != len(names) {
-		return nil, errors.New("unexpected LI.FI struct")
-	}
-	fields := make(map[string]xdr.ScVal, len(names))
-	for _, e := range **v.Map {
-		if e.Key.Type != xdr.ScValTypeScvSymbol || e.Key.Sym == nil {
-			return nil, errors.New("invalid LI.FI field name")
-		}
-		key := string(*e.Key.Sym)
-		if _, exists := fields[key]; exists {
-			return nil, errors.New("duplicate LI.FI field")
-		}
-		fields[key] = e.Val
-	}
-	for _, name := range names {
-		if _, ok := fields[name]; !ok {
-			return nil, errors.New("missing LI.FI field")
-		}
-	}
-	return fields, nil
-}
 func scVec(v xdr.ScVal) ([]xdr.ScVal, error) {
 	if v.Type != xdr.ScValTypeScvVec || v.Vec == nil || *v.Vec == nil {
 		return nil, errors.New("not a vector")
@@ -191,9 +217,6 @@ func addressEquals(v xdr.ScVal, s string) bool {
 	a, err := scValAddress(v)
 	return err == nil && a == s
 }
-func sameAuthorizedCall(node xdr.SorobanAuthorizedInvocation, call *xdr.InvokeContractArgs) bool {
-	return node.Function.Type == xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn && reflect.DeepEqual(node.Function.ContractFn, call)
-}
 func checkLifiTransfer(node xdr.SorobanAuthorizedInvocation, want envelopeExpectation, recipient string, amount *big.Int) error {
 	fn := node.Function.ContractFn
 	if node.Function.Type != xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn || fn == nil ||
@@ -209,45 +232,50 @@ func checkLifiTransfer(node xdr.SorobanAuthorizedInvocation, want envelopeExpect
 }
 
 // Bind each Aquarius authorization to its exact distribution path and pools.
-func checkLifiAquariusRoute(distribution, authorizedHops xdr.ScVal, want envelopeExpectation) error {
+func checkLifiAquariusRoute(distribution, authorizedHops xdr.ScVal, want envelopeExpectation) (uint32, error) {
 	fields, err := strictScMap(distribution, "bytes", "parts", "path", "protocol_id")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	protocol, parts := fields["protocol_id"], fields["parts"]
 	if protocol.Type != xdr.ScValTypeScvU32 || protocol.U32 == nil || *protocol.U32 != 2 || parts.Type != xdr.ScValTypeScvU32 || parts.U32 == nil || *parts.U32 == 0 {
-		return errors.New("unsupported LI.FI route protocol")
+		return 0, errors.New("unsupported LI.FI route protocol")
 	}
 	path, err := scVec(fields["path"])
 	if err != nil || len(path) < 2 || !addressEquals(path[0], want.SrcToken) || !addressEquals(path[len(path)-1], want.DstToken) {
-		return errors.New("LI.FI path endpoints differ")
+		return 0, errors.New("LI.FI path endpoints differ")
+	}
+	for _, token := range path {
+		if _, err := scValAddress(token); err != nil {
+			return 0, errors.New("LI.FI path token is not an address")
+		}
 	}
 	pools, err := scVec(fields["bytes"])
 	if err != nil || len(pools) != len(path)-1 {
-		return errors.New("LI.FI path pools differ")
+		return 0, errors.New("LI.FI path pools differ")
 	}
 	hops, err := scVec(authorizedHops)
 	if err != nil || len(hops) != len(pools) {
-		return errors.New("LI.FI authorized path differs")
+		return 0, errors.New("LI.FI authorized path differs")
 	}
 	for i, pool := range pools {
 		if pool.Type != xdr.ScValTypeScvBytes || pool.Bytes == nil || len(*pool.Bytes) != 32 {
-			return errors.New("invalid LI.FI pool ID")
+			return 0, errors.New("invalid LI.FI pool ID")
 		}
 		hop, err := scVec(hops[i])
 		if err != nil || len(hop) != 3 {
-			return errors.New("invalid LI.FI Aquarius hop")
+			return 0, errors.New("invalid LI.FI Aquarius hop")
 		}
 		pair, err := scVec(hop[0])
 		if err != nil || len(pair) != 2 {
-			return errors.New("invalid LI.FI Aquarius token pair")
+			return 0, errors.New("invalid LI.FI Aquarius token pair")
 		}
 		samePair := (reflect.DeepEqual(pair[0], path[i]) && reflect.DeepEqual(pair[1], path[i+1])) || (reflect.DeepEqual(pair[1], path[i]) && reflect.DeepEqual(pair[0], path[i+1]))
 		if !samePair || !reflect.DeepEqual(hop[1], pool) || !reflect.DeepEqual(hop[2], path[i+1]) {
-			return errors.New("LI.FI Aquarius hop differs from route")
+			return 0, errors.New("LI.FI Aquarius hop differs from route")
 		}
 	}
-	return nil
+	return uint32(*parts.U32), nil
 }
 
 func lifiU128(v xdr.ScVal) (*big.Int, error) {

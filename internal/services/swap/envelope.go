@@ -110,6 +110,9 @@ func checkTransaction(tx *xdr.Transaction, sender string) error {
 	if tx.Ext.V != 1 || tx.Ext.SorobanData == nil {
 		return errors.New("envelope has no soroban resource data")
 	}
+	if f := tx.Ext.SorobanData.ResourceFee; f < 0 || uint64(f) > uint64(tx.Fee) {
+		return errors.New("invalid resource fee")
+	}
 	if len(tx.Operations) != 1 {
 		return fmt.Errorf("envelope has %d operations, want 1", len(tx.Operations))
 	}
@@ -159,7 +162,7 @@ func checkRouterCall(call *xdr.InvokeContractArgs, want envelopeExpectation) err
 // checkAuthTree allows only the approved router invocation and direct source
 // token transfers from the sender into that router. Unknown calls fail closed.
 func checkAuthTree(node xdr.SorobanAuthorizedInvocation, call *xdr.InvokeContractArgs, want envelopeExpectation, spent *big.Int) error {
-	if node.Function.Type != xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn || !reflect.DeepEqual(node.Function.ContractFn, call) {
+	if !sameAuthorizedCall(node, call) {
 		return errors.New("authorization root differs from the approved router invocation")
 	}
 	for _, sub := range node.SubInvocations {
@@ -172,6 +175,10 @@ func checkAuthTree(node xdr.SorobanAuthorizedInvocation, call *xdr.InvokeContrac
 		}
 	}
 	return nil
+}
+
+func sameAuthorizedCall(node xdr.SorobanAuthorizedInvocation, call *xdr.InvokeContractArgs) bool {
+	return node.Function.Type == xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn && reflect.DeepEqual(node.Function.ContractFn, call)
 }
 
 // checkSenderTransfer adds an allowed sender-to-router source transfer to spent.
@@ -218,4 +225,19 @@ func scValI128(v xdr.ScVal) (*big.Int, error) {
 	n := new(big.Int).SetInt64(int64(p.Hi))
 	n.Lsh(n, 64)
 	return n.Add(n, new(big.Int).SetUint64(uint64(p.Lo))), nil
+}
+
+// names must be in canonical symbol order, as required by Soroban structs.
+func strictScMap(v xdr.ScVal, names ...string) (map[string]xdr.ScVal, error) {
+	if v.Type != xdr.ScValTypeScvMap || v.Map == nil || *v.Map == nil || len(**v.Map) != len(names) {
+		return nil, errors.New("unexpected struct field count")
+	}
+	fields := make(map[string]xdr.ScVal, len(names))
+	for i, entry := range **v.Map {
+		if entry.Key.Type != xdr.ScValTypeScvSymbol || entry.Key.Sym == nil || string(*entry.Key.Sym) != names[i] {
+			return nil, errors.New("unexpected or unordered struct field")
+		}
+		fields[names[i]] = entry.Val
+	}
+	return fields, nil
 }

@@ -70,25 +70,7 @@ func decodeRoutePayload(payloadXDR []byte) (map[string]xdr.ScVal, error) {
 	if err := xdr.SafeUnmarshal(payloadXDR, &v); err != nil {
 		return nil, fmt.Errorf("decoding route payload: %w", err)
 	}
-	if v.Type != xdr.ScValTypeScvMap || v.Map == nil || *v.Map == nil {
-		return nil, errors.New("route payload is not a struct")
-	}
-
-	fields := make(map[string]xdr.ScVal, 3)
-	for _, entry := range **v.Map {
-		if entry.Key.Type != xdr.ScValTypeScvSymbol || entry.Key.Sym == nil {
-			return nil, errors.New("route payload has a non-symbol field name")
-		}
-		name := string(*entry.Key.Sym)
-		if name != "amounts" && name != "assets" && name != "ops" {
-			return nil, fmt.Errorf("route payload has unexpected field %q", name)
-		}
-		fields[name] = entry.Val
-	}
-	if len(fields) != 3 {
-		return nil, errors.New("route payload is missing a field")
-	}
-	return fields, nil
+	return strictScMap(v, "amounts", "assets", "ops")
 }
 
 // routeHeader returns the packed header at the start of ops after checking its
