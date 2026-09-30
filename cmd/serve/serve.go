@@ -12,6 +12,7 @@ import (
 	"github.com/stellar/freighter-backend-v2/internal/auth"
 	"github.com/stellar/freighter-backend-v2/internal/config"
 	"github.com/stellar/freighter-backend-v2/internal/services"
+	"github.com/stellar/freighter-backend-v2/internal/services/swap"
 	"github.com/stellar/freighter-backend-v2/internal/utils"
 )
 
@@ -47,6 +48,9 @@ func (s *ServeCmd) Command() *cobra.Command {
 				if err := validateXoxnoSwapConfig(s.Cfg.SwapConfig); err != nil {
 					return err
 				}
+			}
+			if s.Cfg.SwapConfig.LifiEnabled && !isHTTPURL(s.Cfg.SwapConfig.LifiAPIURL) {
+				return fmt.Errorf("--swap-lifi-api-url must be an http(s) URL")
 			}
 			if n := s.Cfg.PricesConfig.MaxTokensPerRequest; n <= 0 {
 				return fmt.Errorf("--max-tokens-per-request=%d must be positive", n)
@@ -123,6 +127,7 @@ func (s *ServeCmd) Command() *cobra.Command {
 
 	// Swap Config
 	cmd.Flags().BoolVar(&s.Cfg.SwapConfig.LifiEnabled, "swap-lifi-enabled", false, "Enable LI.FI same-chain pubnet quotes (env SWAP_LIFI_ENABLED); shares the sender address with LI.FI")
+	cmd.Flags().StringVar(&s.Cfg.SwapConfig.LifiAPIURL, "swap-lifi-api-url", swap.DefaultLifiAPIURL, "Base URL of the LI.FI REST API (env SWAP_LIFI_API_URL)")
 	cmd.Flags().StringVar(&s.Cfg.SwapConfig.LifiAPIKey, "swap-lifi-api-key", "", "Backend-only LI.FI API key (env SWAP_LIFI_API_KEY)")
 	cmd.Flags().BoolVar(&s.Cfg.SwapConfig.XoxnoEnabled, "swap-xoxno-enabled", false, "Opt in to the XOXNO aggregator, which receives the sender address with each quote (env SWAP_XOXNO_ENABLED); independent of the LI.FI source. See docs/design/2026-09-29-swap-quote-aggregation.md")
 	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoPubnetQuoteURL, "swap-xoxno-pubnet-quote-url", "https://stellar-swap.xoxno.com", "Base URL of the XOXNO aggregator quote server on pubnet")
@@ -178,13 +183,14 @@ func (s *ServeCmd) Command() *cobra.Command {
 	return cmd
 }
 
+func isHTTPURL(v string) bool {
+	u, err := url.Parse(v)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
 // validateXoxnoSwapConfig rejects a malformed aggregator URL or router. An empty
 // value is allowed: it leaves that network without the aggregator.
 func validateXoxnoSwapConfig(c config.SwapConfig) error {
-	isHTTPURL := func(v string) bool {
-		u, err := url.Parse(v)
-		return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
-	}
 	for _, f := range []struct {
 		flag, value, noun string
 		valid             func(string) bool

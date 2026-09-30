@@ -87,11 +87,13 @@ func mustAddrContract(s string) xdr.ScAddress {
 }
 
 func TestLifiQuoteNormalizesAndCompetes(t *testing.T) {
+	defaults := NewQuoteService(Config{LifiEnabled: true}, nil).(*quoteService)
+	assert.Equal(t, "https://li.quest/v1", defaults.sources[1].(*lifiSource).baseURL)
 	q, want, sequence, now := lifiFixture(t)
 	data, err := json.Marshal(q)
 	require.NoError(t, err)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/quote", r.URL.Path)
+		assert.Equal(t, "/v1/quote", r.URL.Path)
 		assert.Equal(t, "test-key", r.Header.Get("x-lifi-api-key"))
 		assert.Equal(t, want.SrcAtoms.String(), r.URL.Query().Get("fromAmount"))
 		assert.Equal(t, want.Sender, r.URL.Query().Get("toAddress"))
@@ -105,8 +107,10 @@ func TestLifiQuoteNormalizesAndCompetes(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"sequence": big.NewInt(sequence - 1).String()})
 	}))
 	defer horizon.Close()
-	s := newLifiSource("test-key", newHorizonClient(horizon.URL, ""), nil)
-	s.baseURL = upstream.URL
+	configured := NewQuoteService(Config{
+		LifiEnabled: true, LifiAPIURL: upstream.URL + "/v1/", LifiAPIKey: "test-key", HorizonPubnetURL: horizon.URL,
+	}, nil).(*quoteService)
+	s := configured.sources[1].(*lifiSource)
 	s.now = func() time.Time { return time.Unix(now, 0) }
 	req := types.SwapQuoteRequest{Network: types.PUBLIC, SourceAsset: want.SrcToken, DestAsset: want.DstToken,
 		SourceAmount: "100", SourceDecimals: 7, DestDecimals: 7, Sender: want.Sender, SlippagePercent: 0.5, TimeoutSeconds: 180}

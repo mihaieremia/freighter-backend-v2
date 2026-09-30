@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stellar/freighter-backend-v2/internal/metrics"
@@ -15,6 +16,9 @@ import (
 )
 
 const lifiChainID int64 = 1201081091099710
+
+// DefaultLifiAPIURL is LI.FI's public REST API endpoint.
+const DefaultLifiAPIURL = "https://li.quest/v1"
 
 // LI.FI supplies an already simulated, sequence-bound envelope. Never rebuild it.
 type lifiSource struct {
@@ -26,8 +30,11 @@ type lifiSource struct {
 	svcMetrics *metrics.Service
 }
 
-func newLifiSource(key string, accounts *horizonClient, m *metrics.Service) *lifiSource {
-	return &lifiSource{baseURL: "https://li.quest/v1", apiKey: key, accounts: accounts,
+func newLifiSource(baseURL, key string, accounts *horizonClient, m *metrics.Service) *lifiSource {
+	if baseURL == "" {
+		baseURL = DefaultLifiAPIURL
+	}
+	return &lifiSource{baseURL: strings.TrimRight(baseURL, "/"), apiKey: key, accounts: accounts,
 		httpClient: &http.Client{Timeout: xoxnoHTTPTimeout}, now: time.Now, svcMetrics: m}
 }
 func (s *lifiSource) Name() string { return types.SwapSourceLifi }

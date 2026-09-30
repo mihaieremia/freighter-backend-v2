@@ -407,11 +407,36 @@ func TestServeCmd_SwapXoxnoConfigFromEnv(t *testing.T) {
 	assert.Equal(t, "https://testnet-tokens.example/list", serveCmd.Cfg.SwapConfig.XoxnoTestnetTokenListURL)
 }
 
-func TestServeCmd_AcceptsTheXoxnoSwapConfig(t *testing.T) {
+func TestServeCmd_SwapLifiConfigFromEnv(t *testing.T) {
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("SWAP_LIFI_ENABLED", "true")
+	t.Setenv("SWAP_LIFI_API_URL", "https://quotes.example/v1/")
+	t.Setenv("SWAP_LIFI_API_KEY", "test-key")
+
+	serveCmd, err := runServe()
+	require.NoError(t, err)
+	assert.True(t, serveCmd.Cfg.SwapConfig.LifiEnabled)
+	assert.Equal(t, "https://quotes.example/v1/", serveCmd.Cfg.SwapConfig.LifiAPIURL)
+	assert.Equal(t, "test-key", serveCmd.Cfg.SwapConfig.LifiAPIKey)
+}
+
+func TestServeCmd_ValidatesLifiAPIURL(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"", "not-a-url", "ftp://quotes.example", "https://"} {
+		_, err := runServe("--swap-lifi-enabled=true", "--swap-lifi-api-url="+value)
+		assert.EqualError(t, err, "--swap-lifi-api-url must be an http(s) URL", value)
+	}
+	_, err := runServe("--swap-lifi-api-url=not-a-url")
+	require.NoError(t, err, "disabled providers ignore their URL")
+}
+
+func TestServeCmd_AcceptsTheSwapConfig(t *testing.T) {
 	t.Parallel()
 
 	for name, args := range map[string][]string{
 		"the default":                       {},
+		"LI.FI default endpoint":            {"--swap-lifi-enabled=true"},
+		"LI.FI local endpoint":              {"--swap-lifi-enabled=true", "--swap-lifi-api-url=http://127.0.0.1:3004/v1/"},
 		"the default URLs and routers on":   {"--swap-xoxno-enabled=true"},
 		"an empty network left out when on": {"--swap-xoxno-enabled=true", "--swap-xoxno-testnet-quote-url=", "--swap-xoxno-testnet-router=", "--swap-xoxno-testnet-token-list-url="},
 	} {

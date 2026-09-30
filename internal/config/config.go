@@ -142,6 +142,7 @@ type HorizonConfig struct {
 // LI.FI uses its pinned pubnet deployment and a backend-only API key.
 type SwapConfig struct {
 	LifiEnabled              bool
+	LifiAPIURL               string
 	LifiAPIKey               string
 	XoxnoEnabled             bool
 	XoxnoPubnetQuoteURL      string

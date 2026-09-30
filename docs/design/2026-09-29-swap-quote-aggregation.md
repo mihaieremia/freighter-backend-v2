@@ -96,9 +96,17 @@ quote server. Boot fails on a malformed URL or router when it is enabled.
 ## LI.FI same-chain provider
 
 Enable independently with `--swap-lifi-enabled` / `SWAP_LIFI_ENABLED`. Optional
-`--swap-lifi-api-key` / `SWAP_LIFI_API_KEY` stays on the backend. The public unauthenticated
+`--swap-lifi-api-url` / `SWAP_LIFI_API_URL` defaults to `https://li.quest/v1`; an enabled
+provider requires a valid HTTP(S) URL. `--swap-lifi-api-key` / `SWAP_LIFI_API_KEY` stays on
+the backend and is sent as `x-lifi-api-key` to that endpoint. The public unauthenticated
 API has a small quote quota; use a backend key for regular traffic. No LI.FI SDK or new
-wallet dependency is needed. Enabling sends the sender address to `li.quest`.
+wallet dependency is needed. Enabling sends the sender address to the configured endpoint.
+
+```dotenv
+SWAP_LIFI_ENABLED=true
+SWAP_LIFI_API_URL=https://li.quest/v1
+SWAP_LIFI_API_KEY=your-backend-api-key
+```
 
 LI.FI is pubnet-only, same-chain, same sender/recipient, exact-input execution. Receive-mode
 input sizing stays with Horizon/XOXNO; LI.FI joins the forward comparison. Responses use the
