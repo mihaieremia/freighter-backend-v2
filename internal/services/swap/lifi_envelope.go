@@ -8,6 +8,7 @@ import (
 
 	xoxno "github.com/xoxno/sdk-go"
 
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -333,6 +334,41 @@ func strictScMap(v xdr.ScVal, names ...string) (map[string]xdr.ScVal, error) {
 		fields[names[i]] = entry.Val
 	}
 	return fields, nil
+}
+
+// Historical receipts validate display identity, not current quote expiry or fees.
+func readLifiReceipt(envelope, result, meta, viewer string, index int) (*xoxno.SwapReceipt, error) {
+	invocation, err := xoxno.ReadConfirmedInvocation(envelope, result, meta, index)
+	if err != nil || invocation == nil {
+		return nil, err
+	}
+	call := invocation.Call
+	if addressOf(call) != lifiRouter || string(call.FunctionName) != "swap" || len(call.Args) != 2 || !addressEquals(call.Args[1], viewer) {
+		return nil, nil
+	}
+	fields, err := strictScMap(call.Args[0], "args", "fees", "interface", "min_amount_out", "token_in", "token_out", "tracking_id")
+	if err != nil {
+		return nil, nil
+	}
+	iface := fields["interface"]
+	if iface.Type != xdr.ScValTypeScvSymbol || iface.Sym == nil || string(*iface.Sym) != "soroswap_aggregator" {
+		return nil, nil
+	}
+	in, inErr := scValAddress(fields["token_in"])
+	out, outErr := scValAddress(fields["token_out"])
+	args, argsErr := scVec(fields["args"])
+	if inErr != nil || outErr != nil || !strkey.IsValidContractAddress(in) || !strkey.IsValidContractAddress(out) || in == out || argsErr != nil || len(args) != 7 || !addressEquals(args[0], in) || !addressEquals(args[1], out) || !addressEquals(args[5], viewer) {
+		return nil, nil
+	}
+	input, err := scValI128(args[2])
+	if err != nil || input.Sign() <= 0 {
+		return nil, nil
+	}
+	amount, err := invocation.ReceivedTokenAmount(out, viewer, "")
+	if err != nil || amount == nil {
+		return nil, err
+	}
+	return &xoxno.SwapReceipt{TokenIn: in, TokenOut: out, AmountIn: input, AmountOut: amount}, nil
 }
 
 // atoms parses a positive base-10 integer, or returns nil.
