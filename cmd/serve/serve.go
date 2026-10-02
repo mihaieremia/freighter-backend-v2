@@ -53,6 +53,9 @@ func (s *ServeCmd) Command() *cobra.Command {
 			if n := s.Cfg.AppConfig.WalletBackendBalanceConcurrency; n <= 0 {
 				return fmt.Errorf("--wallet-backend-balance-concurrency=%d must be positive", n)
 			}
+			if d := s.Cfg.SwapConfig.TokenCacheTTL; d <= 0 {
+				return fmt.Errorf("--swap-token-cache-ttl=%s must be positive", d)
+			}
 			if d := s.Cfg.SwapConfig.SourceTimeout; d <= 0 || d >= handlers.SwapContextTimeout {
 				return fmt.Errorf("--swap-source-timeout=%s must be positive and below %s", d, handlers.SwapContextTimeout)
 			}
@@ -195,7 +198,10 @@ func (s *ServeCmd) Command() *cobra.Command {
 	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoPubnetRouter, "swap-xoxno-pubnet-router", "CCVENFSVCBYDHVOACFZXMNNYVOZ3LKXPZYU5LUI4N7KTXOKRVYD7F3TR", "The only router contract a pubnet aggregator swap transaction may invoke")
 	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoTestnetQuoteURL, "swap-xoxno-testnet-quote-url", "https://testnet-stellar-swap.xoxno.com", "Base URL of the XOXNO aggregator quote server on testnet")
 	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoTestnetRouter, "swap-xoxno-testnet-router", "CDNTWMWW2WGYTKIZTJYNGNVQQZI4KTC5BQRZ3275KESRX5T4O3AYECL5", "The only router contract a testnet aggregator swap transaction may invoke")
+	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoPubnetTokenListURL, "swap-xoxno-pubnet-token-list-url", "https://api.xoxno.com/stellar/tokens?network=mainnet", "XOXNO's Stellar token list for pubnet; the tokens it flags swapListed are the ones the swap tokens route offers")
+	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoTestnetTokenListURL, "swap-xoxno-testnet-token-list-url", "https://testnet-api.xoxno.com/stellar/tokens?network=testnet", "XOXNO's Stellar token list for testnet")
 	cmd.Flags().DurationVar(&s.Cfg.SwapConfig.SourceTimeout, "swap-source-timeout", 6*time.Second, "Time each swap quote source gets before it is dropped from the comparison")
+	cmd.Flags().DurationVar(&s.Cfg.SwapConfig.TokenCacheTTL, "swap-token-cache-ttl", time.Minute, "How long the swap tokens route caches the aggregator's token and price lists")
 
 	// Redis Config
 	cmd.Flags().StringVar(&s.Cfg.RedisConfig.ConnectionName, "redis-connection-name", "freighter-redis", "The name of the Redis connection")
@@ -274,6 +280,8 @@ func validateXoxnoSwapConfig(c config.SwapConfig) error {
 	}{
 		{"swap-xoxno-pubnet-quote-url", c.XoxnoPubnetQuoteURL, "an http(s) URL", isHTTPURL},
 		{"swap-xoxno-testnet-quote-url", c.XoxnoTestnetQuoteURL, "an http(s) URL", isHTTPURL},
+		{"swap-xoxno-pubnet-token-list-url", c.XoxnoPubnetTokenListURL, "an http(s) URL", isHTTPURL},
+		{"swap-xoxno-testnet-token-list-url", c.XoxnoTestnetTokenListURL, "an http(s) URL", isHTTPURL},
 		{"swap-xoxno-pubnet-router", c.XoxnoPubnetRouter, "a Soroban contract id", utils.IsValidContractID},
 		{"swap-xoxno-testnet-router", c.XoxnoTestnetRouter, "a Soroban contract id", utils.IsValidContractID},
 	} {

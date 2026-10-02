@@ -49,6 +49,7 @@ type ApiServer struct {
 	priceHistoryService  types.PriceHistoryService
 	tokenStatsService    types.TokenStatsService
 	swapQuoteService     types.SwapQuoteService
+	swapTokensService    types.SwapTokensService
 	registry             *prometheus.Registry
 	appMetrics           *metrics.Metrics
 	authMode             auth.Mode
@@ -168,6 +169,7 @@ func (s *ApiServer) initServices() error {
 		LifiAPIKey:        s.cfg.SwapConfig.LifiAPIKey,
 		SourceTimeout:     s.cfg.SwapConfig.SourceTimeout,
 	}, s.appMetrics.Service)
+	s.swapTokensService = swap.NewTokensService(networks, stellarExpert, s.cfg.SwapConfig.TokenCacheTTL, s.appMetrics.Service)
 
 	return nil
 }
@@ -179,8 +181,8 @@ func (s *ApiServer) xoxnoSwapNetworks() map[string]swap.Network {
 		return nil
 	}
 	return map[string]swap.Network{
-		types.PUBLIC:  {QuoteURL: s.cfg.SwapConfig.XoxnoPubnetQuoteURL, Router: s.cfg.SwapConfig.XoxnoPubnetRouter},
-		types.TESTNET: {QuoteURL: s.cfg.SwapConfig.XoxnoTestnetQuoteURL, Router: s.cfg.SwapConfig.XoxnoTestnetRouter},
+		types.PUBLIC:  {QuoteURL: s.cfg.SwapConfig.XoxnoPubnetQuoteURL, Router: s.cfg.SwapConfig.XoxnoPubnetRouter, TokenListURL: s.cfg.SwapConfig.XoxnoPubnetTokenListURL},
+		types.TESTNET: {QuoteURL: s.cfg.SwapConfig.XoxnoTestnetQuoteURL, Router: s.cfg.SwapConfig.XoxnoTestnetRouter, TokenListURL: s.cfg.SwapConfig.XoxnoTestnetTokenListURL},
 	}
 }
 
@@ -275,6 +277,7 @@ func (s *ApiServer) routes() ([]route, error) {
 		return nil, fmt.Errorf("init account-history handler: %w", err)
 	}
 	swapQuoteHandler := handlers.NewSwapQuoteHandler(s.swapQuoteService)
+	swapTokensHandler := handlers.NewSwapTokensHandler(s.swapTokensService)
 	whoamiHandler := handlers.NewWhoamiHandler()
 
 	return []route{
@@ -314,6 +317,7 @@ func (s *ApiServer) routes() ([]route, error) {
 		{http.MethodGet, "/api/v1/token-price-history", handlers.CustomHandler(tokenPriceHistoryHandler.GetTokenPriceHistory), true, true},
 		{http.MethodGet, "/api/v1/token-stats", handlers.CustomHandler(tokenStatsHandler.GetTokenStats), true, true},
 		{http.MethodPost, "/api/v1/swap/quote", handlers.CustomHandler(swapQuoteHandler.GetSwapQuote), true, true},
+		{http.MethodGet, "/api/v1/swap/tokens", handlers.CustomHandler(swapTokensHandler.GetSwapTokens), true, true},
 		{http.MethodGet, "/api/v1/auth/whoami", handlers.CustomHandler(whoamiHandler.Whoami), true, true},
 	}, nil
 }

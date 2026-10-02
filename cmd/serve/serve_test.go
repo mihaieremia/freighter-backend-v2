@@ -541,6 +541,13 @@ func runServe(args ...string) (*ServeCmd, error) {
 	return serveCmd, cmd.Execute()
 }
 
+func TestServeCmd_RejectsNonPositiveSwapTokenCacheTTL(t *testing.T) {
+	t.Parallel()
+
+	_, err := runServe("--swap-token-cache-ttl=0")
+	assert.EqualError(t, err, "--swap-token-cache-ttl=0s must be positive")
+}
+
 func TestServeCmd_SwapSourceTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -580,6 +587,8 @@ func TestServeCmd_SwapXoxnoConfigFromEnv(t *testing.T) {
 	serveCmd, err := runServe()
 	require.NoError(t, err)
 	assert.True(t, serveCmd.Cfg.SwapConfig.XoxnoEnabled)
+	assert.Equal(t, "https://tokens.example/list", serveCmd.Cfg.SwapConfig.XoxnoPubnetTokenListURL)
+	assert.Equal(t, "https://testnet-tokens.example/list", serveCmd.Cfg.SwapConfig.XoxnoTestnetTokenListURL)
 }
 
 func TestServeCmd_SwapLifiConfigFromEnv(t *testing.T) {
@@ -609,10 +618,11 @@ func TestServeCmd_AcceptsTheSwapConfig(t *testing.T) {
 	t.Parallel()
 
 	for name, args := range map[string][]string{
-		"the default":                     {},
-		"LI.FI default endpoint":          {"--swap-lifi-enabled=true"},
-		"LI.FI local endpoint":            {"--swap-lifi-enabled=true", "--swap-lifi-api-url=http://127.0.0.1:3004/v1/"},
-		"the default URLs and routers on": {"--swap-xoxno-enabled=true"},
+		"the default":                       {},
+		"LI.FI default endpoint":            {"--swap-lifi-enabled=true"},
+		"LI.FI local endpoint":              {"--swap-lifi-enabled=true", "--swap-lifi-api-url=http://127.0.0.1:3004/v1/"},
+		"the default URLs and routers on":   {"--swap-xoxno-enabled=true"},
+		"an empty network left out when on": {"--swap-xoxno-enabled=true", "--swap-xoxno-testnet-quote-url=", "--swap-xoxno-testnet-router=", "--swap-xoxno-testnet-token-list-url="},
 	} {
 		_, err := runServe(args...)
 		require.NoError(t, err, name)
@@ -627,6 +637,8 @@ func TestServeCmd_RejectsMalformedXoxnoSwapConfig(t *testing.T) {
 	}{
 		{"swap-xoxno-pubnet-quote-url", "not-a-url", "--swap-xoxno-pubnet-quote-url=not-a-url must be an http(s) URL"},
 		{"swap-xoxno-testnet-quote-url", "ftp://quote.example", "--swap-xoxno-testnet-quote-url=ftp://quote.example must be an http(s) URL"},
+		{"swap-xoxno-pubnet-token-list-url", "https://", "--swap-xoxno-pubnet-token-list-url=https:// must be an http(s) URL"},
+		{"swap-xoxno-testnet-token-list-url", "//tokens.example", "--swap-xoxno-testnet-token-list-url=//tokens.example must be an http(s) URL"},
 		{"swap-xoxno-pubnet-router", "CBAD", "--swap-xoxno-pubnet-router=CBAD must be a Soroban contract id"},
 		{"swap-xoxno-testnet-router", "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H", "--swap-xoxno-testnet-router=GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H must be a Soroban contract id"},
 	}

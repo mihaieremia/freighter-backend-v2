@@ -17,7 +17,7 @@ import (
 const xoxnoHTTPTimeout = 15 * time.Second
 
 type (
-	Network     struct{ QuoteURL, Router string }
+	Network     struct{ QuoteURL, Router, TokenListURL string }
 	xoxnoSource struct {
 		networks   map[string]Network
 		accounts   *horizonClient
