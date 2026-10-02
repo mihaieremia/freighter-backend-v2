@@ -13,7 +13,7 @@ import (
 	"github.com/stellar/freighter-backend-v2/internal/auth"
 	"github.com/stellar/freighter-backend-v2/internal/config"
 	"github.com/stellar/freighter-backend-v2/internal/services"
-
+	"github.com/stellar/freighter-backend-v2/internal/services/swap"
 	"github.com/stellar/freighter-backend-v2/internal/utils"
 )
 
@@ -60,6 +60,9 @@ func (s *ServeCmd) Command() *cobra.Command {
 				if err := validateXoxnoSwapConfig(s.Cfg.SwapConfig); err != nil {
 					return err
 				}
+			}
+			if s.Cfg.SwapConfig.LifiEnabled && !isHTTPURL(s.Cfg.SwapConfig.LifiAPIURL) {
+				return fmt.Errorf("--swap-lifi-api-url must be an http(s) URL")
 			}
 			if n := s.Cfg.PricesConfig.MaxTokensPerRequest; n <= 0 {
 				return fmt.Errorf("--max-tokens-per-request=%d must be positive", n)
@@ -184,6 +187,9 @@ func (s *ServeCmd) Command() *cobra.Command {
 	cmd.Flags().StringVar(&s.Cfg.HorizonConfig.HorizonTestnetURL, "horizon-testnet-url", "https://horizon-testnet.stellar.org", "The URL of the testnet Horizon")
 
 	// Swap Config
+	cmd.Flags().BoolVar(&s.Cfg.SwapConfig.LifiEnabled, "swap-lifi-enabled", false, "Enable LI.FI same-chain pubnet quotes (env SWAP_LIFI_ENABLED); shares the sender address with LI.FI")
+	cmd.Flags().StringVar(&s.Cfg.SwapConfig.LifiAPIURL, "swap-lifi-api-url", swap.DefaultLifiAPIURL, "Base URL of the LI.FI REST API (env SWAP_LIFI_API_URL)")
+	cmd.Flags().StringVar(&s.Cfg.SwapConfig.LifiAPIKey, "swap-lifi-api-key", "", "Backend-only LI.FI API key (env SWAP_LIFI_API_KEY)")
 	cmd.Flags().BoolVar(&s.Cfg.SwapConfig.XoxnoEnabled, "swap-xoxno-enabled", false, "Opt in to the XOXNO aggregator, which receives the sender address with each quote (env SWAP_XOXNO_ENABLED); independent of the LI.FI source.")
 	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoPubnetQuoteURL, "swap-xoxno-pubnet-quote-url", "https://stellar-swap.xoxno.com", "Base URL of the XOXNO aggregator quote server on pubnet")
 	cmd.Flags().StringVar(&s.Cfg.SwapConfig.XoxnoPubnetRouter, "swap-xoxno-pubnet-router", "CCVENFSVCBYDHVOACFZXMNNYVOZ3LKXPZYU5LUI4N7KTXOKRVYD7F3TR", "The only router contract a pubnet aggregator swap transaction may invoke")

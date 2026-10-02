@@ -163,6 +163,9 @@ func (s *ApiServer) initServices() error {
 		HorizonPubnetURL:  s.cfg.HorizonConfig.HorizonPubnetURL,
 		HorizonTestnetURL: s.cfg.HorizonConfig.HorizonTestnetURL,
 		Networks:          networks,
+		LifiEnabled:       s.cfg.SwapConfig.LifiEnabled,
+		LifiAPIURL:        s.cfg.SwapConfig.LifiAPIURL,
+		LifiAPIKey:        s.cfg.SwapConfig.LifiAPIKey,
 		SourceTimeout:     s.cfg.SwapConfig.SourceTimeout,
 	}, s.appMetrics.Service)
 

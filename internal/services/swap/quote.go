@@ -260,6 +260,9 @@ func conversionRate(srcAtoms *big.Int, srcDecimals int, dstAtoms *big.Int, dstDe
 
 // Config configures the swap quote service.
 type Config struct {
+	LifiEnabled       bool
+	LifiAPIURL        string
+	LifiAPIKey        string
 	HorizonPubnetURL  string
 	HorizonTestnetURL string
 	// Networks holds the aggregator settings per network. Empty switches the
@@ -277,6 +280,9 @@ func NewQuoteService(cfg Config, svcMetrics *metrics.Service) types.SwapQuoteSer
 	sources := []source{newHorizonSource(horizon, svcMetrics)}
 	if len(cfg.Networks) > 0 {
 		sources = append(sources, newXoxnoSource(cfg.Networks, horizon, svcMetrics))
+	}
+	if cfg.LifiEnabled {
+		sources = append(sources, newLifiSource(cfg.LifiAPIURL, cfg.LifiAPIKey, horizon, svcMetrics))
 	}
 	return newQuoteService(sources, cfg.SourceTimeout, svcMetrics)
 }
